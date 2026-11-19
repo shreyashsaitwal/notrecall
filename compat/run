@@ -601,17 +601,29 @@ PLIST
         fi
       done
     fi
+    sign_ok=0
     if [ "$ent_ok" -eq 1 ]; then
-      /usr/bin/codesign --force --options runtime --sign - --entitlements "$ent_tmp" "$game_app" >> "$log" 2>&1 || true
+      if /usr/bin/codesign --force --options runtime --sign - --entitlements "$ent_tmp" "$game_app" >> "$log" 2>&1; then
+        sign_ok=1
+      elif /usr/bin/codesign --force --sign - "$game_app" >> "$log" 2>&1; then
+        sign_ok=1
+      fi
     else
-      /usr/bin/codesign --force --sign - "$game_app" >> "$log" 2>&1 || true
+      if /usr/bin/codesign --force --sign - "$game_app" >> "$log" 2>&1; then
+        sign_ok=1
+      fi
     fi
     if [ -n "$ent_tmp" ]; then
       rm -f "$ent_tmp"
     fi
     touch "$game_app/Contents/MacOS" 2>/dev/null || true
-    printf '%s\n' "$wrapper_stamp" > "$stamp_file.tmp"
-    mv -f "$stamp_file.tmp" "$stamp_file"
+    if [ "$sign_ok" -eq 1 ]; then
+      printf '%s\n' "$wrapper_stamp" > "$stamp_file.tmp"
+      mv -f "$stamp_file.tmp" "$stamp_file"
+    else
+      echo "=== warning: codesign failed for $game_app; will retry on next launch ===" >> "$log" 2>&1 || true
+      rm -f "$stamp_file" "$stamp_file.tmp"
+    fi
     /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Support/lsregister -f "$game_app" >> "$log" 2>&1 || true
   fi
   launch_wine="$game_app/Contents/MacOS/wine"
