@@ -460,9 +460,28 @@ launch_wine="$WINELOADER"
 game_app=""
 if [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   resolve_game_name
-  game_app="$nr_support/launchers/$app_id/NotRecallGame.app"
+  launcher_dir="$nr_support/launchers/$app_id"
+  game_app="$launcher_dir/NotRecallGame.app"
+  stamp_file="$launcher_dir/.notrecall-stamp"
+
+  wrapper_schema="v2"
+  wine_sha=$(/usr/bin/shasum -a 256 "$WINELOADER" | cut -d' ' -f1)
+  if [ -f "$nr_runtime/runtime.json" ]; then
+    runtime_sig=$(/usr/bin/shasum -a 256 "$nr_runtime/runtime.json" | cut -d' ' -f1)
+  elif [ -d "$wine_unix" ]; then
+    runtime_sig=$(LC_ALL=C ls -1i "$wine_unix" | /usr/bin/shasum -a 256 | cut -d' ' -f1)
+  else
+    runtime_sig="none"
+  fi
+  wrapper_stamp="${wrapper_schema}|${wine_sha}|${runtime_sig}|${nr_runtime}|${wine_unix}|${game_name}"
+
+  saved_stamp=""
+  if [ -f "$stamp_file" ]; then
+    saved_stamp=$(cat "$stamp_file" 2>/dev/null) || saved_stamp=""
+  fi
+
   needs_rebuild=0
-  if [ ! -x "$game_app/Contents/MacOS/wine" ] || [ "$WINELOADER" -nt "$game_app/Contents/MacOS/wine" ] || [ ! -L "$game_app/Contents/lib" ] || [ "$wine_unix" -nt "$game_app/Contents/MacOS" ]; then
+  if [ ! -x "$game_app/Contents/MacOS/wine" ] || [ ! -L "$game_app/Contents/lib" ] || [ ! -d "$game_app/Contents/lib" ] || [ "$saved_stamp" != "$wrapper_stamp" ]; then
     needs_rebuild=1
   fi
   if [ "$needs_rebuild" -eq 1 ]; then
@@ -530,6 +549,8 @@ PLIST
       rm -f "$ent_tmp"
     fi
     touch "$game_app/Contents/MacOS" 2>/dev/null || true
+    printf '%s\n' "$wrapper_stamp" > "$stamp_file.tmp"
+    mv -f "$stamp_file.tmp" "$stamp_file"
     /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Support/lsregister -f "$game_app" >> "$log" 2>&1 || true
   fi
   launch_wine="$game_app/Contents/MacOS/wine"
