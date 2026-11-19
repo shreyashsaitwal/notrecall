@@ -134,6 +134,7 @@ map_game_drive() {
   drive="$WINEPREFIX/dosdevices/s:"
   [ -d "$WINEPREFIX/dosdevices" ] || return 0
   library=""
+  set -f
   old_ifs=$IFS; IFS=:
   for p in ${STEAM_COMPAT_LIBRARY_PATHS:-}; do
     p=${p%/}
@@ -143,7 +144,13 @@ map_game_drive() {
     esac
   done
   IFS=$old_ifs
-  [ -n "$library" ] && [ ! -e "$drive" ] && [ ! -L "$drive" ] && ln -s "$library" "$drive" 2>/dev/null || true
+  set +f
+  [ -n "$library" ] || return 0
+  if [ -L "$drive" ]; then
+    [ "$(readlink "$drive" 2>/dev/null || true)" = "$library" ] || ln -sfn "$library" "$drive" 2>/dev/null || true
+  elif [ ! -e "$drive" ]; then
+    ln -s "$library" "$drive" 2>/dev/null || true
+  fi
 }
 
 link_fonts() {
@@ -547,6 +554,7 @@ if [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" 
   if [ "$needs_rebuild" -eq 1 ]; then
     mkdir -p "$game_app/Contents/MacOS" "$game_app/Contents/Resources"
     cp -c "$WINELOADER" "$game_app/Contents/MacOS/wine" 2>/dev/null || cp "$WINELOADER" "$game_app/Contents/MacOS/wine"
+    chmod u+w "$game_app/Contents/MacOS/wine" 2>/dev/null || true
     patch_macho_uuid "$game_app/Contents/MacOS/wine" "com.notrecall.game.$app_id"
     # Preserve Recall's @loader_path/../lib LC_RPATH from Contents/MacOS/wine.
     ln -sfn "$nr_runtime/lib" "$game_app/Contents/lib" 2>/dev/null || true
@@ -647,11 +655,17 @@ if [ -n "$inserts" ] && [ -f "$overlay_shim" ]; then
 fi
 
 child_pid=""
+terminated=0
 cleanup() {
+  terminated=1
   echo "=== termination signal received, shutting down wineserver ===" >> "$log" 2>&1 || true
   "$WINESERVER" -k >> "$log" 2>&1 || true
   "$WINESERVER" -w >> "$log" 2>&1 || true
-  [ -n "$child_pid" ] && kill "$child_pid" 2>/dev/null || true
+  if [ -n "$child_pid" ]; then
+    kill "$child_pid" 2>/dev/null || true
+  else
+    exit 143
+  fi
 }
 trap cleanup TERM INT HUP
 
@@ -670,9 +684,11 @@ child_pid=$!
 
 status=0
 wait "$child_pid" || status=$?
-echo "=== game exited (status=$status), stopping wineserver ===" >> "$log" 2>&1 || true
-"$WINESERVER" -k >> "$log" 2>&1 || true
-"$WINESERVER" -w >> "$log" 2>&1 || true
+if [ "$terminated" -eq 0 ]; then
+  echo "=== game exited (status=$status), stopping wineserver ===" >> "$log" 2>&1 || true
+  "$WINESERVER" -k >> "$log" 2>&1 || true
+  "$WINESERVER" -w >> "$log" 2>&1 || true
+fi
 
 # 10. Kick off detached post-session shader precompilation.
 if [ -n "$cache_root" ] && [ -x "$pipeline_hook" ]; then
