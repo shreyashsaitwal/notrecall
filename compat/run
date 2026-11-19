@@ -504,14 +504,31 @@ $icon_arg
 </dict>
 </plist>
 PLIST
-    # Ad-hoc sign the wrapper bundle preserving wine's entitlements so Game Mode & TCC bind cleanly.
+    # Ad-hoc sign the wrapper bundle preserving wine's entitlements so Game Mode & TCC bind cleanly,
+    # while allowing DYLD_* env vars (Steam Overlay / overlay-shim.dylib) under Hardened Runtime.
     ent_tmp=$(mktemp "${TMPDIR:-/tmp}/notrecall-ent.XXXXXX" 2>/dev/null || true)
+    ent_ok=0
     if [ -n "$ent_tmp" ] && /usr/bin/codesign -d --xml --entitlements - "$WINELOADER" > "$ent_tmp" 2>/dev/null && grep -q '<key>' "$ent_tmp" 2>/dev/null; then
+      ent_ok=1
+      for ent_key in \
+        com.apple.security.cs.allow-dyld-environment-variables \
+        com.apple.security.cs.disable-library-validation; do
+        if ! /usr/libexec/PlistBuddy -c "Set :$ent_key true" "$ent_tmp" >/dev/null 2>&1; then
+          if ! /usr/libexec/PlistBuddy -c "Add :$ent_key bool true" "$ent_tmp" >/dev/null 2>&1; then
+            ent_ok=0
+            break
+          fi
+        fi
+      done
+    fi
+    if [ "$ent_ok" -eq 1 ]; then
       /usr/bin/codesign --force --options runtime --sign - --entitlements "$ent_tmp" "$game_app" >> "$log" 2>&1 || true
     else
       /usr/bin/codesign --force --sign - "$game_app" >> "$log" 2>&1 || true
     fi
-    [ -n "$ent_tmp" ] && rm -f "$ent_tmp"
+    if [ -n "$ent_tmp" ]; then
+      rm -f "$ent_tmp"
+    fi
     touch "$game_app/Contents/MacOS" 2>/dev/null || true
     /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Support/lsregister -f "$game_app" >> "$log" 2>&1 || true
   fi
