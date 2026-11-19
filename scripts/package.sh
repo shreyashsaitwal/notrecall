@@ -115,8 +115,22 @@ $icon_plist
 PLIST
 
 echo "==> Signing $APP_BUNDLE (identity: $IDENTITY)"
-/usr/bin/codesign --force --deep --sign "$IDENTITY" "$APP_BUNDLE" >/dev/null 2>&1 || true
-/usr/bin/codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null 2>&1 || true
+sign_item() {
+  if [ "$IDENTITY" != "-" ]; then
+    /usr/bin/codesign --force --options runtime --timestamp --sign "$IDENTITY" "$1"
+  else
+    /usr/bin/codesign --force --sign - "$1"
+  fi
+}
+
+# Sign nested Mach-O helpers inside-out before signing the app bundle (avoid deprecated --deep).
+for h in libpipeline_prepare.dylib pipeline-prepare pipeline-warm portable-pipeline; do
+  if [ -f "$RES_DIR/helpers/$h" ]; then
+    sign_item "$RES_DIR/helpers/$h"
+  fi
+done
+sign_item "$APP_BUNDLE"
+/usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
 echo "    OK: $APP_BUNDLE"
 
 if [ "$APP_ONLY" -eq 1 ]; then
