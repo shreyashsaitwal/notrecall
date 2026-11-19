@@ -16,9 +16,15 @@ APP_ONLY=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --app-only)        APP_ONLY=1; shift ;;
-    --runtime-archive) RUNTIME_ARCHIVE="${2:-}"; shift 2 ;;
-    --version)         APP_VERSION="${2:-}"; shift 2 ;;
-    --identity)        IDENTITY="${2:-}"; shift 2 ;;
+    --runtime-archive)
+      [ "$#" -ge 2 ] || { echo "Error: $1 requires a path argument" >&2; exit 1; }
+      RUNTIME_ARCHIVE="$2"; shift 2 ;;
+    --version)
+      [ "$#" -ge 2 ] || { echo "Error: $1 requires a version argument" >&2; exit 1; }
+      APP_VERSION="$2"; shift 2 ;;
+    --identity)
+      [ "$#" -ge 2 ] || { echo "Error: $1 requires an identity argument" >&2; exit 1; }
+      IDENTITY="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -27,10 +33,21 @@ mkdir -p "$OUT_DIR"
 
 echo "==> Compiling NotRecallApp SwiftUI binary"
 SWIFT_BUILD_DIR="$OUT_DIR/.swift-build"
-if ! xcrun swift build --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR" 2>/dev/null; then
-  xcrun swift build --disable-sandbox --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR"
+SWIFT_ERR_LOG=$(mktemp "${TMPDIR:-/tmp}/notrecall-swift-build.XXXXXX")
+SWIFT_SANDBOX_FLAGS=""
+if ! xcrun swift build --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR" 2>"$SWIFT_ERR_LOG"; then
+  if grep -qE 'sandbox_apply|Operation not permitted' "$SWIFT_ERR_LOG" 2>/dev/null; then
+    SWIFT_SANDBOX_FLAGS="--disable-sandbox"
+    xcrun swift build $SWIFT_SANDBOX_FLAGS --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR"
+  else
+    cat "$SWIFT_ERR_LOG" >&2
+    rm -f "$SWIFT_ERR_LOG"
+    exit 1
+  fi
 fi
-SWIFT_BIN_DIR=$(xcrun swift build --disable-sandbox --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR" --show-bin-path)
+rm -f "$SWIFT_ERR_LOG"
+# shellcheck disable=SC2086
+SWIFT_BIN_DIR=$(xcrun swift build $SWIFT_SANDBOX_FLAGS --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR" --show-bin-path)
 cp -f "$SWIFT_BIN_DIR/NotRecallApp" "$OUT_DIR/NotRecallApp"
 
 echo "==> Assembling $APP_BUNDLE"
