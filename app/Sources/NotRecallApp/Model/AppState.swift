@@ -60,7 +60,7 @@ final class AppState: ObservableObject {
         !rosettaInstalled || steamAppURL == nil || !notProtonBridgeReady
     }
 
-    func refresh() async {
+    func refresh(preserveLog: Bool = false) async {
         let fm = FileManager.default
         rosettaInstalled = fm.fileExists(atPath: "/Library/Apple/usr/share/rosetta/rosetta")
         steamAppURL = Self.detectApp(named: "Steam.app", home: home)
@@ -85,8 +85,10 @@ final class AppState: ObservableObject {
         }.value
 
         shaderCaches = scanResult.0
-        recentLogTitle = scanResult.1
-        recentLogText = scanResult.2
+        if !preserveLog {
+            recentLogTitle = scanResult.1
+            recentLogText = scanResult.2
+        }
     }
 
     func openInputMonitoringSettings() {
@@ -168,10 +170,18 @@ final class AppState: ObservableObject {
             app.terminate()
         }
         if !running.isEmpty {
+            var exited = false
             for _ in 0..<20 {
                 let stillRunning = NSRunningApplication.runningApplications(withBundleIdentifier: "com.valvesoftware.steam")
-                if stillRunning.isEmpty { break }
+                if stillRunning.isEmpty {
+                    exited = true
+                    break
+                }
                 try? await Task.sleep(for: .milliseconds(250))
+            }
+            if !exited {
+                statusMessage = "Steam is still shutting down — wait for it to finish closing, then relaunch Steam."
+                return
             }
         }
         do {
@@ -212,7 +222,7 @@ final class AppState: ObservableObject {
         if switchToLogs || result.0 != 0 {
             selectedTab = 2
         }
-        await refresh()
+        await refresh(preserveLog: true)
     }
 
     func clearShaderCache(_ entry: ShaderCacheEntry) async {
