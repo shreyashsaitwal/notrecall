@@ -412,9 +412,19 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   mkdir -p "$DXMT_PIPELINE_CACHE_PATH"
   # Honor per-game Rebuild Shaders marker created by NotRecall.app.
   if [ -f "$cache_root/cache/rebuild-shaders" ]; then
-    echo "=== rebuild-shaders requested; clearing compiled .metallib archives ===" >> "$log" 2>&1 || true
-    find "$DXMT_PIPELINE_CACHE_PATH" -type f -name '*.metallib' -delete 2>/dev/null || true
-    rm -f "$cache_root/cache/rebuild-shaders" 2>/dev/null || true
+    echo "=== rebuild-shaders requested; clearing compiled shader archives and metadata ===" >> "$log" 2>&1 || true
+    if [ -n "${DXMT_PIPELINE_CACHE_PATH:-}" ] && [ -d "$DXMT_PIPELINE_CACHE_PATH" ]; then
+      for dir in "$DXMT_PIPELINE_CACHE_PATH"/*; do
+        [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+        # Remove catalog first so the game loads no stale archive if interrupted.
+        rm -f -- "$dir/archive.json" 2>/dev/null || true
+        rm -rf -- "$dir/archives" 2>/dev/null || true
+        rm -f -- "$dir/earlier-macos.json" 2>/dev/null || true
+        mkdir -p -- "$dir/archives" 2>/dev/null || true
+      done
+    fi
+    rm -f -- "$cache_root/cache/pack.json" "$cache_root/cache/optimized.json" 2>/dev/null || true
+    rm -f -- "$cache_root/cache/rebuild-shaders" 2>/dev/null || true
   fi
   # Recall's pipeline_cache.c reads {"schema":1,"limit":<MiB>} from load.json.
   if [ -n "${NOTRECALL_SHADER_MEM_MB:-}" ] && [ "$NOTRECALL_SHADER_MEM_MB" != "0" ]; then
