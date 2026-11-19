@@ -328,10 +328,13 @@ fi
 # 6. Configure Recall's DXMT, MetalFX, mouse, and shader cache settings.
 export CX_GRAPHICS_BACKEND="dxmt"
 export CX_ACTIVE_GRAPHICS_BACKEND="dxmt"
+export CX_HACK_FILESYSTEM_TYPE="${CX_HACK_FILESYSTEM_TYPE:-1}"
 export ROSETTA_ADVERTISE_AVX="${ROSETTA_ADVERTISE_AVX:-1}"
-export WINEMSYNC="${WINEMSYNC:-0}"
+export WINE_SIMULATE_WRITECOPY="${WINE_SIMULATE_WRITECOPY:-1}"
+export WINEMSYNC="${WINEMSYNC:-1}"
 export WINEESYNC="${WINEESYNC:-0}"
 export DXMT_CANVAS_DRAWABLES="${DXMT_CANVAS_DRAWABLES:-3}"
+export DXMT_CANVAS_OVERLAY="${DXMT_CANVAS_OVERLAY:-0}"
 export DXMT_USE_DEFAULT_METAL_CACHE="${DXMT_USE_DEFAULT_METAL_CACHE:-1}"
 export DXMT_PREPARE_SHADERS="${DXMT_PREPARE_SHADERS:-1}"
 export DXMT_PIPELINE_CACHE_PREFER_EXPENSIVE="${DXMT_PIPELINE_CACHE_PREFER_EXPENSIVE:-1}"
@@ -339,8 +342,14 @@ export DXMT_PIPELINE_CACHE_PREWARM_LIMIT="${DXMT_PIPELINE_CACHE_PREWARM_LIMIT:-1
 export DXMT_PIPELINE_CACHE_PREWARM_MS="${DXMT_PIPELINE_CACHE_PREWARM_MS:-10000}"
 export DXMT_METALFX_GPU_AFTER_HANG="${DXMT_METALFX_GPU_AFTER_HANG:-1}"
 export DXMT_GPU_ERROR_DETAIL="${DXMT_GPU_ERROR_DETAIL:-1}"
+export DXMT_LOG_LEVEL="${DXMT_LOG_LEVEL:-error}"
+export DXMT_LOG_PATH="${DXMT_LOG_PATH:-none}"
 [ -n "$exe_name" ] && export DXMT_GPU_LOST_EXIT="${DXMT_GPU_LOST_EXIT:-$exe_name}"
 export WINEDEBUG="${WINEDEBUG:--all}"
+if [ "${MTL_HUD_ENABLED:-0}" = "1" ]; then
+  export MTL_HUD_DISABLE_MENU_BAR="${MTL_HUD_DISABLE_MENU_BAR:-1}"
+  export MTL_HUD_ELEMENTS="${MTL_HUD_ELEMENTS:-device,rosetta,layersize,memory,gamemode,fps,gputime,frameinterval,frameintervalgraph,shaders}"
+fi
 
 # Windows-side DXMT expects DXMT_CONFIG_FILE as a Windows Z:\... path.
 # Only set when a per-game compatdata/<appid>/dxmt.conf exists (do not fall back
@@ -439,8 +448,10 @@ cache_root=""
 if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   cache_root="$STEAM_COMPAT_DATA_PATH/notrecall-cache"
   export DXMT_PIPELINE_CACHE_PATH="$cache_root/cache/pipelines"
+  export DXMT_SHADER_CACHE_PATH="${DXMT_SHADER_CACHE_PATH:-$cache_root/cache/shaders}"
+  export DXMT_GPU_REPORT="${DXMT_GPU_REPORT:-$STEAM_COMPAT_DATA_PATH/gpu-reports}"
   export DXMT_PIPELINE_CACHE_NAMESPACE="${NOTRECALL_PIPELINE_NAMESPACE:-ow2-source-v1}"
-  mkdir -p "$DXMT_PIPELINE_CACHE_PATH"
+  mkdir -p "$DXMT_PIPELINE_CACHE_PATH" "$DXMT_SHADER_CACHE_PATH" "$DXMT_GPU_REPORT"
   # Honor per-game Rebuild Shaders marker created by NotRecall.app.
   if [ -f "$cache_root/cache/rebuild-shaders" ]; then
     echo "=== rebuild-shaders requested; clearing compiled shader archives and metadata ===" >> "$log" 2>&1 || true
