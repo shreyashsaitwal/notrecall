@@ -12,8 +12,7 @@ let package = Package(
             name: "NotRecallApp",
             path: "Sources/NotRecallApp",
             linkerSettings: [
-                .linkedFramework("AppKit"),
-                .linkedFramework("IOKit")
+                .linkedFramework("AppKit")
             ]
         )
     ]

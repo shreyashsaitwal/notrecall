@@ -26,12 +26,12 @@ done
 mkdir -p "$OUT_DIR"
 
 echo "==> Compiling NotRecallApp SwiftUI binary"
-xcrun swiftc -O -parse-as-library -target arm64-apple-macosx14.0 \
-  "$PROJECT_DIR/app/Sources/NotRecallApp/NotRecallApp.swift" \
-  "$PROJECT_DIR/app/Sources/NotRecallApp/Model/AppState.swift" \
-  "$PROJECT_DIR/app/Sources/NotRecallApp/Views/ContentView.swift" \
-  -o "$OUT_DIR/NotRecallApp" \
-  -framework SwiftUI -framework AppKit -framework IOKit -framework Combine
+SWIFT_BUILD_DIR="$OUT_DIR/.swift-build"
+if ! xcrun swift build --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR" 2>/dev/null; then
+  xcrun swift build --disable-sandbox --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR"
+fi
+SWIFT_BIN_DIR=$(xcrun swift build --disable-sandbox --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR" --show-bin-path)
+cp -f "$SWIFT_BIN_DIR/NotRecallApp" "$OUT_DIR/NotRecallApp"
 
 echo "==> Assembling $APP_BUNDLE"
 rm -rf "$APP_BUNDLE"
