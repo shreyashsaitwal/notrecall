@@ -23,13 +23,13 @@ stop_background_precompile() {
   case "$old_pid" in ''|*[!0-9]*) return 0 ;; esac
   if kill -0 "$old_pid" 2>/dev/null; then
     echo "=== pipeline: stopping in-progress background precompile (pid $old_pid) ===" >> "$log" 2>&1 || true
-    kill -TERM "$old_pid" 2>/dev/null || true
+    kill -TERM -- "-$old_pid" 2>/dev/null || kill -TERM "$old_pid" 2>/dev/null || true
     waited=0
     while kill -0 "$old_pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
       sleep 0.25 2>/dev/null || sleep 1
       waited=$((waited + 1))
     done
-    kill -9 "$old_pid" 2>/dev/null || true
+    kill -9 -- "-$old_pid" 2>/dev/null || kill -9 "$old_pid" 2>/dev/null || true
   fi
 }
 
@@ -58,14 +58,40 @@ case "$mode" in
     stop_background_precompile
     echo "=== pipeline: spawning detached post-session shader precompilation ===" >> "$log" 2>&1 || true
     post_log="$cache_root/precompile.log"
-    (
-      if [ -n "$game_app" ] && [ -e "$game_app" ]; then
-        exec "$portable_pipeline" --after-session "$cache_root" "$game_app"
-      else
-        exec "$portable_pipeline" --after-session "$cache_root"
-      fi
-    ) > "$post_log" 2>&1 < /dev/null &
-    printf '%s\n' "$!" > "$pid_file"
+    if [ -n "$game_app" ] && [ -e "$game_app" ]; then
+      set -- "$portable_pipeline" --after-session "$cache_root" "$game_app"
+    else
+      set -- "$portable_pipeline" --after-session "$cache_root"
+    fi
+    # Detach into a new session, reparent to launchd, and close inherited FDs > 2
+    # so Steam never stays stuck on "Running" waiting for background precompilation.
+    if [ -x /usr/bin/perl ]; then
+      /usr/bin/perl -MPOSIX=setsid,close -e '
+        my ($log_path, $pid_path, @cmd) = @ARGV;
+        my $pid = fork();
+        exit 1 if !defined $pid;
+        exit 0 if $pid > 0;
+        setsid();
+        $SIG{HUP} = "IGNORE";
+        open STDIN,  "<", "/dev/null";
+        open STDOUT, ">", $log_path;
+        open STDERR, ">&", \*STDOUT;
+        for my $fd (3 .. 255) { POSIX::close($fd); }
+        if (open my $pf, ">", "$pid_path.tmp") {
+          print $pf "$$\n";
+          close $pf;
+          rename "$pid_path.tmp", $pid_path;
+        }
+        exec @cmd;
+        exit 127;
+      ' "$post_log" "$pid_file" "$@" || true
+    else
+      (
+        trap "" HUP
+        "$@" > "$post_log" 2>&1 < /dev/null &
+        printf '%s\n' "$!" > "$pid_file.tmp" && mv -f "$pid_file.tmp" "$pid_file"
+      )
+    fi
     ;;
   *)
     echo "usage: $0 <pre|post> <cache_root> [game_app] [log]" >&2
