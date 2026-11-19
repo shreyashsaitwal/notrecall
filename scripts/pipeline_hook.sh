@@ -22,14 +22,30 @@ stop_background_precompile() {
   rm -f "$pid_file"
   case "$old_pid" in ''|*[!0-9]*) return 0 ;; esac
   if kill -0 "$old_pid" 2>/dev/null; then
+    old_args=$(/bin/ps -p "$old_pid" -o args= 2>/dev/null || true)
+    case "$old_args" in
+      *portable-pipeline*) ;;
+      *) return 0 ;;
+    esac
+    old_pgid=$(/bin/ps -p "$old_pid" -o pgid= 2>/dev/null | tr -d ' \t' || true)
     echo "=== pipeline: stopping in-progress background precompile (pid $old_pid) ===" >> "$log" 2>&1 || true
-    kill -TERM -- "-$old_pid" 2>/dev/null || kill -TERM "$old_pid" 2>/dev/null || true
+    if [ "$old_pgid" = "$old_pid" ]; then
+      kill -TERM -- "-$old_pid" 2>/dev/null || kill -TERM "$old_pid" 2>/dev/null || true
+    else
+      kill -TERM "$old_pid" 2>/dev/null || true
+    fi
     waited=0
     while kill -0 "$old_pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
       sleep 0.25 2>/dev/null || sleep 1
       waited=$((waited + 1))
     done
-    kill -9 -- "-$old_pid" 2>/dev/null || kill -9 "$old_pid" 2>/dev/null || true
+    if kill -0 "$old_pid" 2>/dev/null; then
+      if [ "$old_pgid" = "$old_pid" ]; then
+        kill -9 -- "-$old_pid" 2>/dev/null || kill -9 "$old_pid" 2>/dev/null || true
+      else
+        kill -9 "$old_pid" 2>/dev/null || true
+      fi
+    fi
   fi
 }
 
