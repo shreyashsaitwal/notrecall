@@ -99,6 +99,10 @@ target="${1:-}"
 exe_name=""
 if [ -n "${NOTRECALL_MOUSE_EXE:-}" ]; then
   exe_name="$NOTRECALL_MOUSE_EXE"
+elif [ "$app_id" = "2357570" ]; then
+  # Overwatch on Steam: always bind mouselook & GPU-lost exit to Overwatch.exe
+  # even if Steam launches through a bootstrapper or wrapper executable.
+  exe_name="Overwatch.exe"
 elif [ -n "$target" ]; then
   exe_name=$(printf '%s' "$target" | sed -e 's|.*[/\\]||')
 fi
@@ -413,14 +417,17 @@ if [ -n "$exe_name" ] && [ "$mouse_mode" != "off" ]; then
     hid)
       export WINEMAC_INPUT_VARIANT="precise"
       export WINEMAC_RAW_SOURCE="hid"
+      export WINEMAC_MOUSELOOK_RAW_INTERVAL_US="${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-0}"
       ;;
     precise)
       export WINEMAC_INPUT_VARIANT="precise"
+      export WINEMAC_MOUSELOOK_RAW_INTERVAL_US="${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-0}"
       unset WINEMAC_RAW_SOURCE || true
       ;;
     classic)
       export WINEMAC_INPUT_VARIANT="classic"
       unset WINEMAC_RAW_SOURCE || true
+      unset WINEMAC_MOUSELOOK_RAW_INTERVAL_US || true
       ;;
   esac
 fi
@@ -672,7 +679,7 @@ trap cleanup TERM INT HUP
 {
   echo "=== launching: $launch_wine $shim_exe $* ==="
   echo "DXMT_CONFIG_FILE=${DXMT_CONFIG_FILE:-} DXMT_CONFIG=${DXMT_CONFIG:-}"
-  echo "WINEMAC_MOUSELOOK=${WINEMAC_MOUSELOOK:-} WINEMAC_RAW_SOURCE=${WINEMAC_RAW_SOURCE:-}"
+  echo "WINEMAC_MOUSELOOK=${WINEMAC_MOUSELOOK:-} WINEMAC_RAW_SOURCE=${WINEMAC_RAW_SOURCE:-} WINEMAC_MOUSELOOK_RAW_INTERVAL_US=${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-}"
 } >> "$log" 2>&1 || true
 
 (
