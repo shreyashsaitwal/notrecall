@@ -1,7 +1,6 @@
 import AppKit
 import Combine
 import Foundation
-import IOKit.hid
 import UniformTypeIdentifiers
 
 struct ShaderCacheEntry: Identifiable, Hashable, Sendable {
@@ -39,7 +38,6 @@ final class AppState: ObservableObject {
     @Published var steamToolInstalled = false
     @Published var pluginInstalled = false
     @Published var helpersInstalled = false
-    @Published var inputMonitoringGranted = false
 
     @Published var steamLibraryCount = 0
     @Published var shaderCaches: [ShaderCacheEntry] = []
@@ -73,7 +71,6 @@ final class AppState: ObservableObject {
         steamToolInstalled = fm.isExecutableFile(atPath: steamCompatTool.appending(path: "run").path)
         pluginInstalled = fm.fileExists(atPath: pluginFile.path)
         helpersInstalled = fm.isExecutableFile(atPath: notRecallSupport.appending(path: "helpers/portable-pipeline").path)
-        inputMonitoringGranted = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
 
         recallRuntimeDetected = Self.detectRecallRuntime(home: home)
 
@@ -92,10 +89,15 @@ final class AppState: ObservableObject {
         recentLogText = scanResult.2
     }
 
-    func requestInputMonitoring() {
-        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
-            NSWorkspace.shared.open(url)
+    func openInputMonitoringSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") else {
+            statusMessage = "Could not build Input Monitoring Settings URL."
+            return
+        }
+        if NSWorkspace.shared.open(url) {
+            statusMessage = "Opened Input Monitoring settings. Add Steam.app if using 8,000 Hz Raw HID mouse mode."
+        } else {
+            statusMessage = "Could not open System Settings → Privacy & Security → Input Monitoring."
         }
     }
 
@@ -257,7 +259,7 @@ final class AppState: ObservableObject {
         Steam Compat Tool:  \(steamToolInstalled ? "installed" : "missing")
         NotProton Plugin:   \(pluginInstalled ? "installed" : "missing")
         Shader Helpers:     \(helpersInstalled ? "installed" : "missing")
-        Input Monitoring:   \(inputMonitoringGranted ? "granted" : "not granted")
+        Input Monitoring:   manual setup required (grant to Steam.app in System Settings)
         Shader Caches:      \(shaderCaches.count) game(s)
 
         --- Latest Log Tail (\(recentLogTitle.isEmpty ? "none" : recentLogTitle)) ---

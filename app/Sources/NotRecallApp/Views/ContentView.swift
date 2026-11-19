@@ -75,18 +75,18 @@ struct ContentView: View {
                         statusRow("NotProton UI Plugin (50-notrecall.conf)", ok: state.pluginInstalled, detail: state.pluginFile.path)
                         statusRow("Offline Shader Precompiler (portable-pipeline)", ok: state.helpersInstalled, detail: state.notRecallSupport.appending(path: "helpers/portable-pipeline").path)
                         HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: state.inputMonitoringGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                .foregroundStyle(state.inputMonitoringGranted ? .green : .orange)
+                            Image(systemName: "info.circle.fill")
+                                .foregroundStyle(.secondary)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Input Monitoring Permission (Raw HID Mouse)").font(.body)
-                                Text("Drag Steam.app into Input Monitoring for 8,000 Hz mouse polling.")
+                                Text("Optional — only needed for 8,000 Hz Raw HID mouse mode. Grant Input Monitoring to Steam.app in System Settings.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
                             Button("Reveal Steam") { state.revealSteamInFinder() }
                                 .controlSize(.small)
-                            Button("Settings") { state.requestInputMonitoring() }
+                            Button("Open Settings") { state.openInputMonitoringSettings() }
                                 .controlSize(.small)
                         }
                     }
