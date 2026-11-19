@@ -1,0 +1,569 @@
+#!/bin/sh
+# notrecall Steam Play compatibility tool runner.
+# Launches Windows Steam games using Recall's patched Wine + DXMT runtime while
+# reusing stock NotProton's Steamworks bridge (lsteamclient, steam-shim, overlay-shim).
+set -e
+
+verb="${1:-}"
+shift || true
+
+case "$verb" in
+  getcompatpath)
+    printf '%s\n' "$STEAM_COMPAT_DATA_PATH"
+    exit 0
+    ;;
+esac
+
+nr_support="$HOME/Library/Application Support/notrecall"
+nr_runtime="$nr_support/runtime"
+nr_helpers="$nr_support/helpers"
+np_support="$HOME/Library/Application Support/notproton"
+bridge_src="$np_support/bridge"
+tool_dir=$(cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || tool_dir=""
+
+if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+  mkdir -p "$STEAM_COMPAT_DATA_PATH"
+  log="$STEAM_COMPAT_DATA_PATH/notrecall-run.log"
+else
+  log="/dev/null"
+fi
+[ -f "$log" ] && [ "$(stat -f %z "$log" 2>/dev/null || echo 0)" -gt 262144 ] && : > "$log" || true
+
+show_alert() {
+  [ "$verb" != "run" ] || return 0
+  osascript >/dev/null 2>&1 <<APPLESCRIPT || true
+display alert "$1" message "$2" as critical
+APPLESCRIPT
+}
+
+# 1. Verify Recall runtime and NotProton bridge are staged.
+WINELOADER="$nr_runtime/bin/wine"
+WINESERVER="$nr_runtime/bin/wineserver"
+wine_unix="$nr_runtime/lib/wine/x86_64-unix"
+
+if [ ! -x "$WINELOADER" ] || [ ! -x "$WINESERVER" ] || [ ! -d "$wine_unix" ]; then
+  echo "=== notrecall runtime missing at $nr_runtime ===" >> "$log" 2>&1 || true
+  show_alert "NotRecall runtime not installed" "Run scripts/install.sh from the notrecall project to stage the Recall Wine + DXMT runtime."
+  exit 1
+fi
+
+if [ ! -d "$bridge_src" ]; then
+  echo "=== NotProton bridge missing at $bridge_src ===" >> "$log" 2>&1 || true
+  show_alert "NotProton bridge not found" "Install and run NotProton once so its Steamworks bridge is staged in ~/Library/Application Support/notproton/bridge."
+  exit 1
+fi
+
+export WINELOADER WINESERVER
+export PATH="$nr_runtime/bin:$PATH"
+export WINEDLLPATH="$nr_runtime/lib/wine/x86_64-windows:$wine_unix${WINEDLLPATH:+:$WINEDLLPATH}"
+export DYLD_FALLBACK_LIBRARY_PATH="$nr_runtime/lib:$wine_unix${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+
+if [ -f "$nr_runtime/lib/external/libd3dshared.dylib" ]; then
+  export CX_APPLEGPTK_LIBD3DSHARED_PATH="$nr_runtime/lib/external/libd3dshared.dylib"
+fi
+
+# 2. Resolve AppID and Steam environment (guarding non-Steam shortcuts >= 2^31).
+app_id="${STEAM_COMPAT_APP_ID:-}"
+case "$app_id" in ''|0) app_id="${SteamAppId:-}" ;; esac
+case "$app_id" in ''|0) app_id=$(basename "${STEAM_COMPAT_DATA_PATH:-0}" 2>/dev/null) ;; esac
+case "$app_id" in ''|*[!0-9]*) app_id=0 ;; esac
+
+# Steam gives every non-Steam shortcut a 64-bit game ID ending in 0x02000000.
+shortcut_game_id() {
+  case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${#1}" -le 20 ] || return 1
+  high=0
+  low="$1"
+  if [ "${#1}" -gt 10 ]; then
+    high="${1%??????????}"
+    low="${1#"$high"}"
+  fi
+  high="${high#"${high%%[!0]*}"}"
+  low="${low#"${low%%[!0]*}"}"
+  [ $(( (${high:-0} % 4294967296 * 1410065408 + ${low:-0}) % 4294967296 )) = 33554432 ]
+}
+
+case "$verb" in
+  waitforexitandrun)
+    if shortcut_game_id "${SteamGameId:-}" || [ "$app_id" -ge 2147483648 ] 2>/dev/null; then
+      unset SteamAppId || true
+    else
+      [ -n "${SteamAppId:-}" ] || export SteamAppId="$app_id"
+    fi
+    [ -n "${SteamGameId:-}" ] || export SteamGameId="$app_id"
+    ;;
+esac
+
+# 3. Extract target .exe basename for Recall's dynamic env vars.
+target="${1:-}"
+exe_name=""
+if [ -n "${NOTRECALL_MOUSE_EXE:-}" ]; then
+  exe_name="$NOTRECALL_MOUSE_EXE"
+elif [ -n "$target" ]; then
+  exe_name=$(printf '%s' "$target" | sed -e 's|.*[/\\]||')
+fi
+
+{
+  echo "=== notrecall run $(date) ==="
+  echo "verb=$verb app_id=$app_id exe=${exe_name:-unknown}"
+  echo "runtime=$nr_runtime"
+  echo "STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH:-}"
+  echo "STEAM_COMPAT_INSTALL_PATH=${STEAM_COMPAT_INSTALL_PATH:-}"
+} >> "$log" 2>&1 || true
+
+# 4. Prepare per-game Wine prefix (Proton steamuser + Steam Cloud legacy symlinks + S: drive).
+lay_out_proton_profile() {
+  users="$WINEPREFIX/drive_c/users"
+  profile="$users/steamuser"
+  mkdir -p "$profile/Documents" "$profile/Desktop" "$profile/Downloads" \
+    "$profile/Music" "$profile/Pictures" "$profile/Videos" \
+    "$profile/AppData/Local" "$profile/AppData/Roaming" \
+    "$profile/Local Settings" 2>/dev/null || true
+  [ -e "$profile/My Documents" ] || [ -L "$profile/My Documents" ] || \
+    ln -s "./Documents" "$profile/My Documents" 2>/dev/null || true
+  [ -e "$profile/Application Data" ] || [ -L "$profile/Application Data" ] || \
+    ln -s "./AppData/Roaming" "$profile/Application Data" 2>/dev/null || true
+  [ -e "$profile/Local Settings/Application Data" ] || [ -L "$profile/Local Settings/Application Data" ] || \
+    ln -s "../AppData/Local" "$profile/Local Settings/Application Data" 2>/dev/null || true
+  [ -e "$users/crossover" ] || [ -L "$users/crossover" ] || \
+    ln -s steamuser "$users/crossover" 2>/dev/null || true
+}
+
+map_game_drive() {
+  [ -n "${STEAM_COMPAT_INSTALL_PATH:-}" ] || return 0
+  drive="$WINEPREFIX/dosdevices/s:"
+  [ -d "$WINEPREFIX/dosdevices" ] || return 0
+  library=""
+  old_ifs=$IFS; IFS=:
+  for p in ${STEAM_COMPAT_LIBRARY_PATHS:-}; do
+    p=${p%/}
+    [ -n "$p" ] || continue
+    case "$STEAM_COMPAT_INSTALL_PATH/" in
+      "$p"/*) [ "${#p}" -gt "${#library}" ] && library="$p" ;;
+    esac
+  done
+  IFS=$old_ifs
+  [ -n "$library" ] && [ ! -e "$drive" ] && [ ! -L "$drive" ] && ln -s "$library" "$drive" 2>/dev/null || true
+}
+
+link_fonts() {
+  [ -f "$WINEPREFIX/system.reg" ] || return 0
+  fonts_dir="$WINEPREFIX/drive_c/windows/Fonts"
+  mkdir -p "$fonts_dir" 2>/dev/null || return 0
+  for dir in "$np_support/fonts" "$nr_runtime/share/wine/fonts"; do
+    [ -d "$dir" ] || continue
+    for src in "$dir"/*.ttf "$dir"/*.ttc; do
+      [ -f "$src" ] || continue
+      dst="$fonts_dir/${src##*/}"
+      [ -e "$dst" ] || [ -L "$dst" ] || ln -s "$src" "$dst" 2>/dev/null || true
+    done
+  done
+}
+
+# Detect Microsoft native VC++ runtime DLLs installed in system32 so Wine prefers them.
+native_vc_runtime() {
+  for name in concrt140 msvcp140 msvcp140_1 msvcp140_2 msvcp140_atomic_wait msvcp140_codecvt_ids \
+    vcamp140 vccorlib140 vcomp140 vcruntime140 vcruntime140_1; do
+    dll="$WINEPREFIX/drive_c/windows/system32/$name.dll"
+    [ -f "$dll" ] || continue
+    if [ "$(dd if="$dll" bs=1 skip=64 count=16 2>/dev/null)" != "Wine builtin DLL" ]; then
+      printf '%s=n,b;' "$name"
+    fi
+  done
+}
+
+# Hide Steam-Input-managed controllers & Switch pads from WineBus hidraw to prevent double input.
+controller_ids() {
+  printf '%s\n' "$1" | tr ',' '\n' | tr 'A-F' 'a-f' \
+    | sed -n 's/^[[:space:]]*0x\([0-9a-f]\{4\}\)\/0x\([0-9a-f]\{4\}\)[[:space:]]*$/\1\/\2/p' \
+    | sort -u
+}
+
+ids_without() {
+  printf '%s\n' "$2" -- "$1" \
+    | awk '$0 == "--" { s = 1; next } !s { b[$0]; next } $0 != "" && !($0 in b)'
+}
+
+import_prefix_settings() {
+  [ -f "$WINEPREFIX/system.reg" ] || return 0
+  controllers_file="$STEAM_COMPAT_DATA_PATH/notrecall-hidden-controllers"
+  owned=""
+  [ ! -f "$controllers_file" ] || owned=$(sed -n '/^[0-9a-f]\{4\}\/[0-9a-f]\{4\}$/p' "$controllers_file")
+
+  wanted=""
+  if [ "${NOTRECALL_RAW_CONTROLLERS:-0}" != "1" ]; then
+    wanted=$(ids_without "$(controller_ids "${SDL_GAMECONTROLLER_IGNORE_DEVICES:-}")" \
+      "$(controller_ids "${SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT:-}")")
+    wanted=$(printf '%s\n' "$wanted" 057e/2006 057e/2007 057e/2009 | sed '/^$/d' | sort -u)
+    # Steam install scripts (verb=run) receive no ignore list; preserve existing hidden set.
+    if [ "$verb" = "run" ]; then
+      wanted=$(printf '%s\n' "$wanted" "$owned" | sed '/^$/d' | sort -u)
+    fi
+  fi
+  removed=$(ids_without "$owned" "$wanted")
+
+  reg_file=$(mktemp "$WINEPREFIX/drive_c/notrecall-settings.XXXXXX" 2>/dev/null) || return 0
+  {
+    printf '%s\r\n' \
+      'Windows Registry Editor Version 5.00' '' \
+      '[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\AeDebug]' '"Auto"="0"' '' \
+      '[HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug]' '"Auto"="0"' '' \
+      '[HKEY_CURRENT_USER\Software\Wine\WineDbg]' '"ShowCrashDialog"=dword:00000000' '' \
+      '[HKEY_LOCAL_MACHINE\Software\Classes\steam]' '"URL Protocol"=""' '' \
+      '[HKEY_LOCAL_MACHINE\Software\Classes\steam\shell\open\command]' \
+      '@="\"C:\\Program Files (x86)\\Steam\\steam.exe\" \"%1\""' ''
+
+    printf '%s\n' "$wanted" | while IFS= read -r cid; do
+      [ -n "$cid" ] || continue
+      printf '%s\r\n' \
+        "[HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Services\\WineBus\\Devices\\$cid]" \
+        '"Hidraw"=dword:00000000' ''
+    done
+    printf '%s\n' "$removed" | while IFS= read -r cid; do
+      [ -n "$cid" ] || continue
+      printf '%s\r\n' \
+        "[-HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Services\\WineBus\\Devices\\$cid]" ''
+    done
+  } > "$reg_file" 2>/dev/null
+
+  # Only run reg import (and restart wineserver) when settings actually changed.
+  reg_sha=$(/usr/bin/shasum -a 256 "$reg_file" 2>/dev/null | cut -d' ' -f1)
+  stamp_file="$STEAM_COMPAT_DATA_PATH/.notrecall-reg.sha"
+  if [ -n "$reg_sha" ] && [ "$(cat "$stamp_file" 2>/dev/null || true)" = "$reg_sha" ]; then
+    echo "=== prefix settings unchanged, skipping reg import ===" >> "$log" 2>&1 || true
+  else
+    if "$WINELOADER" reg import "C:\\${reg_file##*/}" >> "$log" 2>&1; then
+      printf '%s\n' "$reg_sha" > "$stamp_file" 2>/dev/null || true
+      printf '%s\n' "$wanted" | sed '/^$/d' | sort -u > "$controllers_file.new" 2>/dev/null && \
+        mv -f "$controllers_file.new" "$controllers_file" 2>/dev/null || rm -f "$controllers_file.new"
+      "$WINESERVER" -k >> "$log" 2>&1 || true
+      "$WINESERVER" -w >> "$log" 2>&1 || true
+    fi
+  fi
+  rm -f "$reg_file"
+}
+
+if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+  export WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
+  mkdir -p "$WINEPREFIX"
+  lay_out_proton_profile
+  if [ ! -f "$WINEPREFIX/system.reg" ]; then
+    echo "=== initializing new prefix at $WINEPREFIX ===" >> "$log" 2>&1 || true
+    "$WINELOADER" wineboot --init >> "$log" 2>&1 || true
+    "$WINESERVER" -w >> "$log" 2>&1 || true
+  fi
+  map_game_drive
+  import_prefix_settings
+  link_fonts
+fi
+
+# 5. Stage NotProton's Steamworks bridge and legacycompat into the prefix & Steam client.
+prefix_steam="$WINEPREFIX/drive_c/Program Files (x86)/Steam"
+bridge_files="steamclient64.dll steamclient.dll tier0_s64.dll vstdlib_s64.dll lsteamclient.dll lsteamclient.so steam.exe"
+
+if [ -n "${WINEPREFIX:-}" ]; then
+  mkdir -p "$prefix_steam" "$WINEPREFIX/drive_c/windows/system32/config" 2>/dev/null || true
+  for f in $bridge_files; do
+    src="$bridge_src/$f"
+    [ "$f" = "lsteamclient.so" ] && src="$bridge_src/x86_64-unix/$f"
+    [ -f "$src" ] || continue
+    cmp -s "$src" "$prefix_steam/$f" 2>/dev/null || cp -c -fp "$src" "$prefix_steam/$f" 2>/dev/null || cp -fp "$src" "$prefix_steam/$f"
+  done
+  if [ -f "$bridge_src/i386-windows/lsteamclient.dll" ] && [ -d "$WINEPREFIX/drive_c/windows/syswow64" ]; then
+    cmp -s "$bridge_src/i386-windows/lsteamclient.dll" "$WINEPREFIX/drive_c/windows/syswow64/lsteamclient.dll" 2>/dev/null || \
+      cp -fp "$bridge_src/i386-windows/lsteamclient.dll" "$WINEPREFIX/drive_c/windows/syswow64/lsteamclient.dll"
+  fi
+  if [ -f "$bridge_src/legacycompat/Steam.dll" ] && [ -d "$WINEPREFIX/drive_c/windows/syswow64" ]; then
+    cmp -s "$bridge_src/legacycompat/Steam.dll" "$WINEPREFIX/drive_c/windows/syswow64/Steam.dll" 2>/dev/null || \
+      cp -fp "$bridge_src/legacycompat/Steam.dll" "$WINEPREFIX/drive_c/windows/syswow64/Steam.dll"
+  fi
+  export WINEDLLPATH="$prefix_steam:$WINEDLLPATH"
+  if [ -z "${STEAM_COMPAT_CLIENT_INSTALL_PATH:-}" ]; then
+    export STEAM_COMPAT_CLIENT_INSTALL_PATH="$HOME/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS"
+  fi
+  # Stage legacycompat evaluators & Steam.dll symlink for older Steam games.
+  if [ -d "$bridge_src/legacycompat" ] && [ -n "$STEAM_COMPAT_CLIENT_INSTALL_PATH" ]; then
+    mkdir -p "$STEAM_COMPAT_CLIENT_INSTALL_PATH/legacycompat" 2>/dev/null || true
+    for f in "$bridge_src/legacycompat"/*; do
+      [ -f "$f" ] || continue
+      dst="$STEAM_COMPAT_CLIENT_INSTALL_PATH/legacycompat/${f##*/}"
+      cmp -s "$f" "$dst" 2>/dev/null || cp -c -f "$f" "$dst" 2>/dev/null || cp -f "$f" "$dst" 2>/dev/null || true
+    done
+    legacy_dll="$STEAM_COMPAT_CLIENT_INSTALL_PATH/legacycompat/Steam.dll"
+    if [ -n "${STEAM_COMPAT_INSTALL_PATH:-}" ] && [ -f "$legacy_dll" ]; then
+      link_dst="$(dirname "$STEAM_COMPAT_INSTALL_PATH")/Steam.dll"
+      [ -e "$link_dst" ] || [ -L "$link_dst" ] || { ln -sfn "$legacy_dll" "$link_dst" 2>/dev/null && chflags -h hidden "$link_dst" 2>/dev/null || true; }
+    fi
+  fi
+fi
+
+# 6. Configure Recall's DXMT, MetalFX, mouse, and shader cache settings.
+export CX_GRAPHICS_BACKEND="dxmt"
+export CX_ACTIVE_GRAPHICS_BACKEND="dxmt"
+export ROSETTA_ADVERTISE_AVX="${ROSETTA_ADVERTISE_AVX:-1}"
+export WINEMSYNC="${WINEMSYNC:-0}"
+export WINEESYNC="${WINEESYNC:-0}"
+export DXMT_CANVAS_DRAWABLES="${DXMT_CANVAS_DRAWABLES:-3}"
+export DXMT_USE_DEFAULT_METAL_CACHE="${DXMT_USE_DEFAULT_METAL_CACHE:-1}"
+export DXMT_PREPARE_SHADERS="${DXMT_PREPARE_SHADERS:-1}"
+export DXMT_PIPELINE_CACHE_PREFER_EXPENSIVE="${DXMT_PIPELINE_CACHE_PREFER_EXPENSIVE:-1}"
+export DXMT_PIPELINE_CACHE_PREWARM_LIMIT="${DXMT_PIPELINE_CACHE_PREWARM_LIMIT:-128}"
+export DXMT_PIPELINE_CACHE_PREWARM_MS="${DXMT_PIPELINE_CACHE_PREWARM_MS:-10000}"
+export DXMT_METALFX_GPU_AFTER_HANG="${DXMT_METALFX_GPU_AFTER_HANG:-1}"
+export DXMT_GPU_ERROR_DETAIL="${DXMT_GPU_ERROR_DETAIL:-1}"
+[ -n "$exe_name" ] && export DXMT_GPU_LOST_EXIT="${DXMT_GPU_LOST_EXIT:-$exe_name}"
+export WINEDEBUG="${WINEDEBUG:--all}"
+
+# Windows-side DXMT expects DXMT_CONFIG_FILE as a Windows Z:\... path.
+# Only set when a per-game compatdata/<appid>/dxmt.conf exists (do not fall back
+# to Recall's Overwatch-specific runtime/config/dxmt.conf).
+posix_to_winpath() {
+  printf 'Z:%s' "$1" | tr '/' '\\'
+}
+if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ] && [ -f "$STEAM_COMPAT_DATA_PATH/dxmt.conf" ]; then
+  export DXMT_CONFIG_FILE="$(posix_to_winpath "$STEAM_COMPAT_DATA_PATH/dxmt.conf")"
+fi
+
+# Assemble DXMT_CONFIG clauses without clobbering user-supplied options.
+dxmt_cfg="${DXMT_CONFIG:-}"
+append_dxmt_cfg() {
+  dxmt_cfg="${dxmt_cfg:+$dxmt_cfg;}$1"
+}
+if [ "${NOTRECALL_FRAME_PACING:-on}" = "on" ]; then
+  append_dxmt_cfg "dxgi.presentPacing=True;dxgi.presentPacingMode=3;dxgi.presentPacingTargetUs=1000"
+fi
+if [ -n "${NOTRECALL_FPS_LIMIT:-}" ] && [ "$NOTRECALL_FPS_LIMIT" != "0" ]; then
+  append_dxmt_cfg "d3d11.preferredMaxFrameRate=$NOTRECALL_FPS_LIMIT"
+fi
+if [ "${DXMT_ENABLE_NVEXT:-0}" = "1" ] && [ -n "${NOTRECALL_METALFX_SHARPNESS:-}" ] && [ "$NOTRECALL_METALFX_SHARPNESS" != "0" ]; then
+  append_dxmt_cfg "d3d11.metalfxSharpness=$NOTRECALL_METALFX_SHARPNESS"
+fi
+[ -n "$dxmt_cfg" ] && export DXMT_CONFIG="$dxmt_cfg"
+
+# Stage Recall's signed nvngx.dll into system32 when MetalFX/DLSS is enabled,
+# backing up and restoring Wine's placeholder when toggled off.
+stage_metalfx_nvngx() {
+  [ -n "${WINEPREFIX:-}" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ] || return 0
+  sys32="$WINEPREFIX/drive_c/windows/system32"
+  [ -d "$sys32" ] || return 0
+  src="$nr_runtime/lib/wine/x86_64-windows/nvngx.dll"
+  dst="$sys32/nvngx.dll"
+  backup="$STEAM_COMPAT_DATA_PATH/notrecall-nvngx.bak"
+  marker="$STEAM_COMPAT_DATA_PATH/.notrecall-nvngx.staged"
+  if [ "${DXMT_ENABLE_NVEXT:-0}" = "1" ]; then
+    [ -f "$src" ] || return 0
+    if [ ! -f "$marker" ] && [ -f "$dst" ] && [ ! -f "$backup" ]; then
+      cp -f "$dst" "$backup" 2>/dev/null || true
+    fi
+    if ! cmp -s "$src" "$dst" 2>/dev/null; then
+      cp -f "$src" "$dst.nr-tmp" 2>/dev/null && mv -f "$dst.nr-tmp" "$dst" 2>/dev/null || rm -f "$dst.nr-tmp"
+    fi
+    : > "$marker" 2>/dev/null || true
+  elif [ -f "$marker" ]; then
+    if [ -f "$backup" ]; then
+      cp -f "$backup" "$dst.nr-tmp" 2>/dev/null && mv -f "$dst.nr-tmp" "$dst" 2>/dev/null || rm -f "$dst.nr-tmp"
+      rm -f "$backup" 2>/dev/null || true
+    else
+      rm -f "$dst" 2>/dev/null || true
+    fi
+    rm -f "$marker" 2>/dev/null || true
+  fi
+}
+stage_metalfx_nvngx
+
+# Match Recall's explicit DXMT & MetalFX WINEDLLOVERRIDES contract.
+vc_overrides=$(native_vc_runtime)
+if [ "${DXMT_ENABLE_NVEXT:-0}" = "1" ]; then
+  export MTLFX_FORCE_GPU="${MTLFX_FORCE_GPU:-0}"
+  metalfx_overrides="d3d12,nvapi64,nvngx=b;"
+else
+  metalfx_overrides="d3d12,nvapi64,nvngx=;"
+fi
+export WINEDLLOVERRIDES="${vc_overrides}${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}d3d11,dxgi,d3d10core,winemetal=b;${metalfx_overrides}steamclient=n;steamclient64=n;lsteamclient=b"
+
+# Dynamic Recall raw mouse configuration from the launched .exe basename (or NOTRECALL_MOUSE_EXE).
+mouse_mode="${NOTRECALL_MOUSE_MODE:-hid}"
+if [ -n "$exe_name" ] && [ "$mouse_mode" != "off" ]; then
+  export WINEMAC_MOUSELOOK="$exe_name"
+  case "$mouse_mode" in
+    hid)
+      export WINEMAC_INPUT_VARIANT="precise"
+      export WINEMAC_RAW_SOURCE="hid"
+      ;;
+    precise)
+      export WINEMAC_INPUT_VARIANT="precise"
+      unset WINEMAC_RAW_SOURCE || true
+      ;;
+    classic)
+      export WINEMAC_INPUT_VARIANT="classic"
+      unset WINEMAC_RAW_SOURCE || true
+      ;;
+  esac
+fi
+
+# Per-game DXMT shader pipeline cache path.
+# Namespace defaults to ow2-source-v1 to match stock portable-pipeline; per-game
+# isolation is already guaranteed by DXMT_PIPELINE_CACHE_PATH under compatdata/<appid>.
+cache_root=""
+if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+  cache_root="$STEAM_COMPAT_DATA_PATH/notrecall-cache"
+  export DXMT_PIPELINE_CACHE_PATH="$cache_root/cache/pipelines"
+  export DXMT_PIPELINE_CACHE_NAMESPACE="${NOTRECALL_PIPELINE_NAMESPACE:-ow2-source-v1}"
+  mkdir -p "$DXMT_PIPELINE_CACHE_PATH"
+  # Honor per-game Rebuild Shaders marker created by NotRecall.app.
+  if [ -f "$cache_root/cache/rebuild-shaders" ]; then
+    echo "=== rebuild-shaders requested; clearing compiled .metallib archives ===" >> "$log" 2>&1 || true
+    find "$DXMT_PIPELINE_CACHE_PATH" -type f -name '*.metallib' -delete 2>/dev/null || true
+    rm -f "$cache_root/cache/rebuild-shaders" 2>/dev/null || true
+  fi
+  # Recall's pipeline_cache.c reads {"schema":1,"limit":<MiB>} from load.json.
+  if [ -n "${NOTRECALL_SHADER_MEM_MB:-}" ] && [ "$NOTRECALL_SHADER_MEM_MB" != "0" ]; then
+    case "$NOTRECALL_SHADER_MEM_MB" in
+      *[!0-9]*) ;;
+      *)
+        printf '{"schema":1,"limit":%s}\n' "$NOTRECALL_SHADER_MEM_MB" > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
+        ;;
+    esac
+  else
+    rm -f "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
+  fi
+fi
+
+shim_exe="C:\\Program Files (x86)\\Steam\\steam.exe"
+
+# Helper verbs (install scripts, runinprefix) skip Game Mode and pipeline hooks.
+if [ "$verb" != "waitforexitandrun" ]; then
+  status=0
+  case "$verb" in
+    runinprefix) "$WINELOADER" "$@" >> "$log" 2>&1 || status=$? ;;
+    *)           "$WINELOADER" "$shim_exe" "$@" >> "$log" 2>&1 || status=$? ;;
+  esac
+  exit "$status"
+fi
+
+# 7. Resolve real game name & optional .icns icon, then build Game Mode .app wrapper.
+resolve_game_name() {
+  game_name=""
+  if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ] && [ "$app_id" != "0" ]; then
+    steam_root="$(dirname "$(dirname "$(dirname "$STEAM_COMPAT_DATA_PATH")")")"
+    manifest="$steam_root/steamapps/appmanifest_$app_id.acf"
+    if [ -f "$manifest" ]; then
+      game_name=$(sed -n 's/.*"name"[[:space:]]*"\(.*\)".*/\1/p' "$manifest" | head -1)
+    fi
+  fi
+  [ -z "$game_name" ] && [ -n "${STEAM_COMPAT_INSTALL_PATH:-}" ] && game_name=$(basename "$STEAM_COMPAT_INSTALL_PATH")
+  [ -z "$game_name" ] && game_name="NotRecall Game ($app_id)"
+  game_name_xml=$(printf '%s' "$game_name" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
+}
+
+launch_wine="$WINELOADER"
+game_app=""
+if [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+  resolve_game_name
+  game_app="$nr_support/launchers/$app_id/NotRecallGame.app"
+  needs_rebuild=0
+  if [ ! -x "$game_app/Contents/MacOS/wine" ] || [ "$WINELOADER" -nt "$game_app/Contents/MacOS/wine" ] || [ ! -L "$game_app/Contents/lib" ] || [ "$wine_unix" -nt "$game_app/Contents/MacOS" ]; then
+    needs_rebuild=1
+  fi
+  if [ "$needs_rebuild" -eq 1 ]; then
+    mkdir -p "$game_app/Contents/MacOS" "$game_app/Contents/Resources"
+    cp -c "$WINELOADER" "$game_app/Contents/MacOS/wine" 2>/dev/null || cp "$WINELOADER" "$game_app/Contents/MacOS/wine"
+    # Preserve Recall's @loader_path/../lib LC_RPATH from Contents/MacOS/wine.
+    ln -sfn "$nr_runtime/lib" "$game_app/Contents/lib" 2>/dev/null || true
+    # CrossOver 26's wine looks for ntdll.so and unix libs right next to itself.
+    for f in "$wine_unix"/*; do
+      [ -e "$f" ] || continue
+      base=${f##*/}
+      case "$base" in wine|wine.app) continue ;; esac
+      ln -sfn "$f" "$game_app/Contents/MacOS/$base" 2>/dev/null || true
+    done
+    # Try building a Dock icon via NotProton's iconmaker if available.
+    icon_arg=""
+    if [ -x "$np_support/iconmaker" ] && [ -n "$target" ] && [ -f "$target" ]; then
+      if "$np_support/iconmaker" "$target" "$game_app/Contents/Resources/game.icns" >> "$log" 2>&1; then
+        icon_arg="  <key>CFBundleIconFile</key><string>game</string>"
+      fi
+    fi
+    cat > "$game_app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>$game_name_xml</string>
+  <key>CFBundleDisplayName</key><string>$game_name_xml</string>
+  <key>CFBundleIdentifier</key><string>com.notrecall.game.$app_id</string>
+  <key>CFBundleExecutable</key><string>wine</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>LSSupportsGameMode</key><true/>
+  <key>GCSupportsGameMode</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+  <key>NSMicrophoneUsageDescription</key><string>This game would like to access your microphone.</string>
+  <key>NSLocalNetworkUsageDescription</key><string>This game would like to access devices on your local network.</string>
+$icon_arg
+</dict>
+</plist>
+PLIST
+    # Ad-hoc sign the wrapper bundle preserving wine's entitlements so Game Mode & TCC bind cleanly.
+    ent_tmp=$(mktemp "${TMPDIR:-/tmp}/notrecall-ent.XXXXXX" 2>/dev/null || true)
+    if [ -n "$ent_tmp" ] && /usr/bin/codesign -d --xml --entitlements - "$WINELOADER" > "$ent_tmp" 2>/dev/null && grep -q '<key>' "$ent_tmp" 2>/dev/null; then
+      /usr/bin/codesign --force --options runtime --sign - --entitlements "$ent_tmp" "$game_app" >> "$log" 2>&1 || true
+    else
+      /usr/bin/codesign --force --sign - "$game_app" >> "$log" 2>&1 || true
+    fi
+    [ -n "$ent_tmp" ] && rm -f "$ent_tmp"
+    touch "$game_app/Contents/MacOS" 2>/dev/null || true
+    /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Support/lsregister -f "$game_app" >> "$log" 2>&1 || true
+  fi
+  launch_wine="$game_app/Contents/MacOS/wine"
+fi
+
+# 8. Pre-launch shader pipeline consolidate & warm.
+pipeline_hook="$nr_helpers/pipeline_hook.sh"
+[ ! -x "$pipeline_hook" ] && [ -x "$tool_dir/pipeline_hook.sh" ] && pipeline_hook="$tool_dir/pipeline_hook.sh"
+if [ -n "$cache_root" ] && [ -x "$pipeline_hook" ]; then
+  "$pipeline_hook" pre "$cache_root" "${game_app:-$launch_wine}" "$log" || true
+fi
+
+# 9. Wire Steam Overlay shim and launch game through steam.exe shim.
+inserts="${STEAM_DYLD_INSERT_LIBRARIES:-}"
+overlay_shim="$np_support/overlay-shim.dylib"
+if [ -n "$inserts" ] && [ -f "$overlay_shim" ]; then
+  export NOTPROTON_OVERLAY_SHIM="$overlay_shim"
+  inserts="$overlay_shim:$inserts"
+fi
+
+child_pid=""
+cleanup() {
+  echo "=== termination signal received, shutting down wineserver ===" >> "$log" 2>&1 || true
+  "$WINESERVER" -k >> "$log" 2>&1 || true
+  "$WINESERVER" -w >> "$log" 2>&1 || true
+  [ -n "$child_pid" ] && kill "$child_pid" 2>/dev/null || true
+}
+trap cleanup TERM INT HUP
+
+{
+  echo "=== launching: $launch_wine $shim_exe $* ==="
+  echo "DXMT_CONFIG_FILE=${DXMT_CONFIG_FILE:-} DXMT_CONFIG=${DXMT_CONFIG:-}"
+  echo "WINEMAC_MOUSELOOK=${WINEMAC_MOUSELOOK:-} WINEMAC_RAW_SOURCE=${WINEMAC_RAW_SOURCE:-}"
+} >> "$log" 2>&1 || true
+
+(
+  export WINELOADER="$launch_wine"
+  [ -z "$inserts" ] || export DYLD_INSERT_LIBRARIES="$inserts"
+  exec "$launch_wine" "$shim_exe" "$@"
+) >> "$log" 2>&1 &
+child_pid=$!
+
+status=0
+wait "$child_pid" || status=$?
+echo "=== game exited (status=$status), stopping wineserver ===" >> "$log" 2>&1 || true
+"$WINESERVER" -k >> "$log" 2>&1 || true
+"$WINESERVER" -w >> "$log" 2>&1 || true
+
+# 10. Kick off detached post-session shader precompilation.
+if [ -n "$cache_root" ] && [ -x "$pipeline_hook" ]; then
+  "$pipeline_hook" post "$cache_root" "${game_app:-$launch_wine}" "$log" || true
+fi
+
+exit "$status"
