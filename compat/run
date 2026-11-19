@@ -232,25 +232,42 @@ import_prefix_settings() {
   if [ -n "$reg_sha" ] && [ "$(cat "$stamp_file" 2>/dev/null || true)" = "$reg_sha" ]; then
     echo "=== prefix settings unchanged, skipping reg import ===" >> "$log" 2>&1 || true
   else
-    if "$WINELOADER" reg import "C:\\${reg_file##*/}" >> "$log" 2>&1; then
+    if without_lock_fds "$WINELOADER" reg import "C:\\${reg_file##*/}" >> "$log" 2>&1; then
       printf '%s\n' "$reg_sha" > "$stamp_file" 2>/dev/null || true
       printf '%s\n' "$wanted" | sed '/^$/d' | sort -u > "$controllers_file.new" 2>/dev/null && \
         mv -f "$controllers_file.new" "$controllers_file" 2>/dev/null || rm -f "$controllers_file.new"
-      "$WINESERVER" -k >> "$log" 2>&1 || true
-      "$WINESERVER" -w >> "$log" 2>&1 || true
+      without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
+      without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
     fi
   fi
   rm -f "$reg_file"
 }
 
+# Keeps Wine/wineserver from inheriting the per-prefix lock FD.
+without_lock_fds() {
+  "$@" 8>&-
+}
+
+prefix_locked=0
 if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+  prefix_lock="$STEAM_COMPAT_DATA_PATH/.notrecall-prefix.lock"
+  if [ ! -L "$prefix_lock" ] && { [ ! -e "$prefix_lock" ] || [ -f "$prefix_lock" ]; }; then
+    if exec 8>> "$prefix_lock" 2>/dev/null; then
+      if /usr/bin/lockf -s -t 60 8 2>/dev/null; then
+        prefix_locked=1
+      else
+        echo "=== prefix lock busy after 60s, continuing without lock ===" >> "$log" 2>&1 || true
+        exec 8>&-
+      fi
+    fi
+  fi
   export WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
   mkdir -p "$WINEPREFIX"
   lay_out_proton_profile
   if [ ! -f "$WINEPREFIX/system.reg" ]; then
     echo "=== initializing new prefix at $WINEPREFIX ===" >> "$log" 2>&1 || true
-    "$WINELOADER" wineboot --init >> "$log" 2>&1 || true
-    "$WINESERVER" -w >> "$log" 2>&1 || true
+    without_lock_fds "$WINELOADER" wineboot --init >> "$log" 2>&1 || true
+    without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
   fi
   map_game_drive
   import_prefix_settings
@@ -443,6 +460,7 @@ shim_exe="C:\\Program Files (x86)\\Steam\\steam.exe"
 
 # Helper verbs (install scripts, runinprefix) skip Game Mode and pipeline hooks.
 if [ "$verb" != "waitforexitandrun" ]; then
+  if [ "$prefix_locked" -eq 1 ]; then exec 8>&-; prefix_locked=0; fi
   status=0
   case "$verb" in
     runinprefix) "$WINELOADER" "$@" >> "$log" 2>&1 || status=$? ;;
@@ -474,7 +492,39 @@ if [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" 
   game_app="$launcher_dir/NotRecallGame.app"
   stamp_file="$launcher_dir/.notrecall-stamp"
 
-  wrapper_schema="v2"
+  # Rewrite LC_UUID deterministically per AppID so macOS Local Network privacy
+  # keys each Steam game separately (matching Recall's game_mode_app.py).
+  patch_macho_uuid() {
+    [ -x /usr/bin/perl ] || return 0
+    /usr/bin/perl -MDigest::SHA=sha1 -e '
+      my ($path, $ident) = @ARGV;
+      open my $fh, "+<:raw", $path or exit 1;
+      read($fh, my $hdr, 32) == 32 or exit 1;
+      my ($magic, undef, undef, undef, $ncmds) = unpack("V5", $hdr);
+      exit 0 if $magic != 0xfeedfacf;
+      my $off = 32;
+      for (1 .. $ncmds) {
+        seek($fh, $off, 0) or exit 1;
+        read($fh, my $lc, 8) == 8 or exit 1;
+        my ($cmd, $cmdsize) = unpack("VV", $lc);
+        last if $cmdsize < 8;
+        if ($cmd == 0x1b && $cmdsize >= 24) {
+          read($fh, my $orig, 16) == 16 or exit 1;
+          my @b = unpack("C16", substr(sha1($orig . $ident), 0, 16));
+          $b[6] = ($b[6] & 0x0f) | 0x50;
+          $b[8] = ($b[8] & 0x3f) | 0x80;
+          seek($fh, $off + 8, 0) or exit 1;
+          print $fh pack("C16", @b);
+          close $fh;
+          exit 0;
+        }
+        $off += $cmdsize;
+      }
+      close $fh;
+    ' "$1" "$2" 2>/dev/null || true
+  }
+
+  wrapper_schema="v3"
   wine_sha=$(/usr/bin/shasum -a 256 "$WINELOADER" | cut -d' ' -f1)
   if [ -f "$nr_runtime/runtime.json" ]; then
     runtime_sig=$(/usr/bin/shasum -a 256 "$nr_runtime/runtime.json" | cut -d' ' -f1)
@@ -497,6 +547,7 @@ if [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" 
   if [ "$needs_rebuild" -eq 1 ]; then
     mkdir -p "$game_app/Contents/MacOS" "$game_app/Contents/Resources"
     cp -c "$WINELOADER" "$game_app/Contents/MacOS/wine" 2>/dev/null || cp "$WINELOADER" "$game_app/Contents/MacOS/wine"
+    patch_macho_uuid "$game_app/Contents/MacOS/wine" "com.notrecall.game.$app_id"
     # Preserve Recall's @loader_path/../lib LC_RPATH from Contents/MacOS/wine.
     ln -sfn "$nr_runtime/lib" "$game_app/Contents/lib" 2>/dev/null || true
     # CrossOver 26's wine looks for ntdll.so and unix libs right next to itself.
@@ -565,6 +616,8 @@ PLIST
   fi
   launch_wine="$game_app/Contents/MacOS/wine"
 fi
+
+if [ "$prefix_locked" -eq 1 ]; then exec 8>&-; prefix_locked=0; fi
 
 # 8. Pre-launch shader pipeline consolidate & warm.
 pipeline_hook="$nr_helpers/pipeline_hook.sh"
