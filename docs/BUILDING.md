@@ -52,7 +52,9 @@ make package
 
 ### Signing for Distribution
 
-By default, `make build-runtime` and `make package` use ad-hoc signing (`IDENTITY=-`). For distribution to other Macs, pass a Developer ID Application identity:
+`scripts/package.sh` builds `NotRecallApp` via `swift build -c release` (from `app/Package.swift`), signs nested Mach-O helpers (`libpipeline_prepare.dylib`, `pipeline-prepare`, `pipeline-warm`, `portable-pipeline`) inside-out before signing `NotRecall.app` (avoiding deprecated `codesign --deep`), and enforces `codesign --verify --deep --strict`.
+
+By default, `make build-runtime` and `make package` use ad-hoc signing (`IDENTITY=-`). For distribution to other Macs, pass a Developer ID Application identity (which automatically enables `--options runtime --timestamp`):
 
 ```sh
 IDENTITY="Developer ID Application: Your Name (TEAMID)" make build-runtime

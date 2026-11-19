@@ -50,9 +50,9 @@ make uninstall
 
 ## `NotRecall.app` Features
 
-- **Status:** Checks Rosetta 2, Steam, NotProton bridge, runtime source (with a **Select…** picker for custom `.tar.gz` archives or unpacked runtime folders), staged runtime version, Steam tool, plugin, helpers, and Input Monitoring. Includes **Install / Update**, **Update Runtime Only**, **Dry Run**, **Restart Steam**, and **Copy Diagnostics**.
-- **Shader Caches:** Scans all Steam libraries from `libraryfolders.vdf` (including external SSDs), resolves game titles from `appmanifest_<appid>.acf`, displays `.metallib` archive counts and disk usage, and offers per-game **Rebuild Shaders** (clears compiled archives on next launch) and **Clear Cache**.
-- **Logs:** Displays the latest `notrecall-run.log` across all Steam libraries with the resolved game title and a one-click **Copy Diagnostics** button for bug reports.
+- **Status:** Checks Rosetta 2, Steam, NotProton bridge, runtime source (with a **Select…** picker for custom `.tar.gz` archives or unpacked runtime folders), staged runtime version, Steam tool, plugin, and helpers, plus a guided **Input Monitoring** setup row (**Reveal Steam** / **Open Settings**) for optional 8,000 Hz Raw HID mouse mode. Includes **Install / Update**, **Update Runtime Only**, **Dry Run**, **Restart Steam**, and **Copy Diagnostics**.
+- **Shader Caches:** Scans all Steam libraries from `libraryfolders.vdf` (including external SSDs), resolves game titles from `appmanifest_<appid>.acf`, displays `.metallib` archive counts and disk usage, and offers per-game **Rebuild Shaders** (clears compiled `.metallib` archives and catalog metadata on next launch while preserving learned recipes) and **Clear Cache**.
+- **Logs:** Displays **Dry Run** / installer script output as well as the latest `notrecall-run.log` across all Steam libraries with the resolved game title and a one-click **Copy Diagnostics** button for bug reports.
 
 ## Building from Source
 
@@ -69,4 +69,6 @@ See [docs/BUILDING.md](docs/BUILDING.md) for the exact toolchain prerequisites (
 
 - **DirectX 10/11 only:** Recall's graphics layer is DXMT. For DirectX 12 games, select one of NotProton's CrossOver D3DMetal runners in Steam's Compatibility dropdown.
 - **Games with a separate launcher `.exe`:** If Steam launches a launcher binary (e.g. `Launcher.exe`) that spawns the actual game `.exe`, set Steam Launch Options to `NOTRECALL_MOUSE_EXE=ActualGame.exe %command%` so Recall binds raw mouse input and GPU-lost exit to the game process.
+- **Per-game Game Mode wrappers:** Each Steam AppID gets a content-stamped `NotRecallGame.app` wrapper with its own deterministic Mach-O `LC_UUID` (isolating macOS Local Network privacy per game) and Hardened Runtime entitlements allowing `DYLD_*` env vars for Steam Overlay.
+- **Atomic runtime updates & `--patch-ntdll`:** `scripts/install.sh` stages and validates runtime updates before swapping them into place. The `--patch-ntdll` fallback requires a local source checkout with `NotProton/ntdll-patch`; standalone `NotRecall.app` uses NotProton's pre-staged `bridge/wine/26.3*`.
 - **Upstream licenses:** Recall's license notices and third-party attributions are bundled under `NotRecall.app/Contents/Resources/licenses/recall/` and inside `runtime.tar.gz`.
