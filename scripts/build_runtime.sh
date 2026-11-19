@@ -39,11 +39,11 @@ USAGE
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --workspace)  WORK_DIR="${2:-}"; shift 2 ;;
-    --toolchains) TOOLCHAINS="${2:-}"; shift 2 ;;
-    --version)    VERSION="${2:-}"; shift 2 ;;
-    --identity)   IDENTITY="${2:-}"; shift 2 ;;
-    --jobs)       JOBS="${2:-}"; shift 2 ;;
+    --workspace)  [ "$#" -ge 2 ] || { echo "Error: $1 requires a value" >&2; usage >&2; exit 1; }; WORK_DIR="$2"; shift 2 ;;
+    --toolchains) [ "$#" -ge 2 ] || { echo "Error: $1 requires a value" >&2; usage >&2; exit 1; }; TOOLCHAINS="$2"; shift 2 ;;
+    --version)    [ "$#" -ge 2 ] || { echo "Error: $1 requires a value" >&2; usage >&2; exit 1; }; VERSION="$2"; shift 2 ;;
+    --identity)   [ "$#" -ge 2 ] || { echo "Error: $1 requires a value" >&2; usage >&2; exit 1; }; IDENTITY="$2"; shift 2 ;;
+    --jobs)       [ "$#" -ge 2 ] || { echo "Error: $1 requires a value" >&2; usage >&2; exit 1; }; JOBS="$2"; shift 2 ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac

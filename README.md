@@ -23,7 +23,7 @@ Use [Recall](https://github.com/AsherJN/recall)'s patched Wine + DXMT runtime as
 1. Open `build/NotRecall.app` (or drag it to `/Applications` from `NotRecall-<version>.dmg`).
 2. Check the **Status** tab — any missing prerequisites (Rosetta 2, Steam, NotProton bridge) are flagged with direct remediation actions.
 3. Click **Dry Run** to preview file operations in the **Logs** tab, or **Install / Update** to stage the runtime, helpers, Steam compatibility tool, and NotProton plugin.
-4. For 8,000 Hz Raw HID mouse polling, click **Reveal Steam** and **Settings** to drag `Steam.app` into **System Settings → Privacy & Security → Input Monitoring**.
+4. For 8,000 Hz Raw HID mouse polling, click **Reveal Steam** and **Open Settings** to drag `Steam.app` into **System Settings → Privacy & Security → Input Monitoring**.
 5. Click **Restart Steam**, then right-click any DirectX 10/11 Windows game → **Properties → Compatibility** → enable **Force the use of a specific Steam Play compatibility tool** → select **NotRecall (Recall Wine + DXMT)**.
 
 ### Using the CLI (`Makefile` / `scripts/install.sh`)
