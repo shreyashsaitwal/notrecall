@@ -65,12 +65,22 @@ find_recall_runtime() {
   ow_root="$HOME/Library/Application Support/Overwatch2Mac"
   if [ -d "$ow_root/runtimes" ]; then
     # Prefer newest version directory under Overwatch2Mac/runtimes/<ver>.
-    for candidate in $(ls -dt "$ow_root/runtimes"/* 2>/dev/null || true); do
+    best_candidate=""
+    best_mtime=-1
+    for candidate in "$ow_root/runtimes"/*; do
+      [ -d "$candidate" ] || continue
       if [ -x "$candidate/bin/wine" ] && [ -d "$candidate/lib/wine/x86_64-unix" ]; then
-        printf '%s' "$candidate"
-        return 0
+        mtime=$(/usr/bin/stat -f '%m' -- "$candidate" 2>/dev/null) || mtime=0
+        if [ "$mtime" -gt "$best_mtime" ]; then
+          best_mtime="$mtime"
+          best_candidate="$candidate"
+        fi
       fi
     done
+    if [ -n "$best_candidate" ]; then
+      printf '%s' "$best_candidate"
+      return 0
+    fi
   fi
   for candidate in \
     "$ow_root/runtime/current" \
