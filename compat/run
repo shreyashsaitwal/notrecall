@@ -352,13 +352,54 @@ if [ "${MTL_HUD_ENABLED:-0}" = "1" ]; then
 fi
 
 # Windows-side DXMT expects DXMT_CONFIG_FILE as a Windows Z:\... path.
-# Only set when a per-game compatdata/<appid>/dxmt.conf exists (do not fall back
-# to Recall's Overwatch-specific runtime/config/dxmt.conf).
+# For Overwatch (AppID 2357570 / Overwatch.exe), generate Recall's tuned DXMT
+# profile (8 normal-priority compiler threads, maxFrameLatency=1, nativeFullscreen,
+# sharpPresentation, A-series displaySyncEnabled) and merge any user dxmt.conf last.
 posix_to_winpath() {
   printf 'Z:%s' "$1" | tr '/' '\\'
 }
-if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ] && [ -f "$STEAM_COMPAT_DATA_PATH/dxmt.conf" ]; then
-  export DXMT_CONFIG_FILE="$(posix_to_winpath "$STEAM_COMPAT_DATA_PATH/dxmt.conf")"
+
+is_overwatch_launch() {
+  [ "$app_id" = "2357570" ] && return 0
+  case "$exe_name" in
+    [Oo][Vv][Ee][Rr][Ww][Aa][Tt][Cc][Hh].[Ee][Xx][Ee]) return 0 ;;
+  esac
+  return 1
+}
+
+if [ -z "${DXMT_CONFIG_FILE:-}" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+  if is_overwatch_launch; then
+    managed_dxmt_conf="$STEAM_COMPAT_DATA_PATH/notrecall-dxmt.conf"
+    tmp_dxmt_conf="$managed_dxmt_conf.tmp.$$"
+    cpu_brand="${NOTRECALL_TEST_CHIP:-$(/usr/sbin/sysctl -n machdep.cpu.brand_string 2>/dev/null || true)}"
+    {
+      printf '%s\n' \
+        '# Managed by notrecall for Overwatch (Recall tuned DXMT profile)' \
+        '[Overwatch.exe]' \
+        'd3d11.releaseShaderIR = True' \
+        'd3d11.preferredMaxFrameRate = 0' \
+        'd3d11.shaderCompilerThreads = 8' \
+        'd3d11.shaderCompilerNormalPriority = True' \
+        'dxgi.nativeFullscreen = True' \
+        'dxgi.maxFrameLatency = 1' \
+        'dxgi.sharpPresentation = True'
+      case "$cpu_brand" in
+        "Apple A"*)
+          printf 'dxgi.displaySyncEnabled = True\n'
+          ;;
+      esac
+      if [ -f "$STEAM_COMPAT_DATA_PATH/dxmt.conf" ]; then
+        printf '\n# User overrides from %s\n[Overwatch.exe]\n' "$STEAM_COMPAT_DATA_PATH/dxmt.conf"
+        cat "$STEAM_COMPAT_DATA_PATH/dxmt.conf"
+        printf '\n'
+      fi
+    } > "$tmp_dxmt_conf" 2>/dev/null && mv -f "$tmp_dxmt_conf" "$managed_dxmt_conf" 2>/dev/null || rm -f "$tmp_dxmt_conf"
+    if [ -f "$managed_dxmt_conf" ]; then
+      export DXMT_CONFIG_FILE="$(posix_to_winpath "$managed_dxmt_conf")"
+    fi
+  elif [ -f "$STEAM_COMPAT_DATA_PATH/dxmt.conf" ]; then
+    export DXMT_CONFIG_FILE="$(posix_to_winpath "$STEAM_COMPAT_DATA_PATH/dxmt.conf")"
+  fi
 fi
 
 # Assemble DXMT_CONFIG clauses without clobbering user-supplied options.
