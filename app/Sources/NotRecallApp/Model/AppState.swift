@@ -196,8 +196,9 @@ final class AppState: ObservableObject {
             proc.standardError = pipe
             do {
                 try proc.run()
-                proc.waitUntilExit()
+                try? pipe.fileHandleForWriting.close()
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                proc.waitUntilExit()
                 return (proc.terminationStatus, String(decoding: data, as: UTF8.self))
             } catch {
                 return (1, error.localizedDescription)
