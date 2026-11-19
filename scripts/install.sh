@@ -34,8 +34,12 @@ USAGE
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --runtime)      RUNTIME_SRC="${2:-}"; shift 2 ;;
-    --helpers)      HELPERS_SRC="${2:-}"; shift 2 ;;
+    --runtime)
+      [ "$#" -ge 2 ] || { echo "Error: $1 requires a path argument" >&2; usage >&2; exit 1; }
+      RUNTIME_SRC="$2"; shift 2 ;;
+    --helpers)
+      [ "$#" -ge 2 ] || { echo "Error: $1 requires a directory argument" >&2; usage >&2; exit 1; }
+      HELPERS_SRC="$2"; shift 2 ;;
     --runtime-only) RUNTIME_ONLY=1; shift ;;
     --patch-ntdll)  FORCE_PATCH_NTDLL=1; shift ;;
     --dry-run)      DRY_RUN=1; shift ;;
@@ -146,26 +150,35 @@ if [ ! -d "$BRIDGE_SRC" ] && [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 echo "==> Staging Recall runtime from: $RUNTIME_SRC"
-run_cmd mkdir -p "$NR_SUPPORT" "$NR_SUPPORT/helpers" "$TOOL_DST" "$NP_SUPPORT/plugins"
-if [ -d "$NR_SUPPORT/runtime" ]; then
-  run_cmd rm -rf "$NR_SUPPORT/runtime"
+run_cmd mkdir -p "$NR_SUPPORT"
+if [ "$RUNTIME_ONLY" -eq 0 ]; then
+  run_cmd mkdir -p "$NR_SUPPORT/helpers" "$TOOL_DST" "$NP_SUPPORT/plugins"
 fi
-if [ "$RUNTIME_IS_ARCHIVE" -eq 1 ]; then
-  if [ "$DRY_RUN" -eq 1 ]; then
-    echo "[dry-run] mkdir -p \"$NR_SUPPORT/runtime\" && tar -xzf \"$RUNTIME_SRC\" -C \"$NR_SUPPORT/runtime\""
+
+STAGE_RUNTIME="$NR_SUPPORT/.runtime.staging.$$"
+OLD_RUNTIME="$NR_SUPPORT/.runtime.old.$$"
+cleanup_stage() {
+  rm -rf "$STAGE_RUNTIME" 2>/dev/null || true
+}
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  if [ "$RUNTIME_IS_ARCHIVE" -eq 1 ]; then
+    echo "[dry-run] extract \"$RUNTIME_SRC\" into staging dir, wire Steamworks bridge, and atomically replace \"$NR_SUPPORT/runtime\""
   else
-    mkdir -p "$NR_SUPPORT/runtime"
-    tar -xzf "$RUNTIME_SRC" -C "$NR_SUPPORT/runtime"
-    if [ ! -x "$NR_SUPPORT/runtime/bin/wine" ]; then
-      echo "Error: Extracted $RUNTIME_SRC did not contain bin/wine." >&2
-      exit 1
-    fi
+    echo "[dry-run] copy \"$RUNTIME_SRC\" into staging dir, wire Steamworks bridge, and atomically replace \"$NR_SUPPORT/runtime\""
   fi
 else
-  if [ "$DRY_RUN" -eq 1 ]; then
-    echo "[dry-run] cp -cR \"$RUNTIME_SRC\" \"$NR_SUPPORT/runtime\""
+  trap cleanup_stage EXIT
+  rm -rf "$STAGE_RUNTIME"
+  if [ "$RUNTIME_IS_ARCHIVE" -eq 1 ]; then
+    mkdir -p "$STAGE_RUNTIME"
+    tar -xzf "$RUNTIME_SRC" -C "$STAGE_RUNTIME"
   else
-    cp -cR "$RUNTIME_SRC" "$NR_SUPPORT/runtime" 2>/dev/null || cp -R "$RUNTIME_SRC" "$NR_SUPPORT/runtime"
+    cp -cR "$RUNTIME_SRC" "$STAGE_RUNTIME" 2>/dev/null || cp -R "$RUNTIME_SRC" "$STAGE_RUNTIME"
+  fi
+  if [ ! -x "$STAGE_RUNTIME/bin/wine" ] || [ ! -d "$STAGE_RUNTIME/lib/wine/x86_64-unix" ]; then
+    echo "Error: Staged runtime from $RUNTIME_SRC did not contain bin/wine and lib/wine/x86_64-unix." >&2
+    exit 1
   fi
 fi
 
@@ -175,14 +188,26 @@ fi
 # ntdll.dll pairs cleanly with Recall's ntdll.so.
 echo "==> Wiring NotProton Steamworks bridge into staged Recall runtime"
 if [ "$DRY_RUN" -eq 0 ]; then
-  [ -f "$BRIDGE_SRC/x86_64-windows/lsteamclient.dll" ] && \
-    cp -fp "$BRIDGE_SRC/x86_64-windows/lsteamclient.dll" "$NR_SUPPORT/runtime/lib/wine/x86_64-windows/"
-  [ -f "$BRIDGE_SRC/lsteamclient.dll" ] && \
-    cp -fp "$BRIDGE_SRC/lsteamclient.dll" "$NR_SUPPORT/runtime/lib/wine/x86_64-windows/"
-  [ -f "$BRIDGE_SRC/i386-windows/lsteamclient.dll" ] && [ -d "$NR_SUPPORT/runtime/lib/wine/i386-windows" ] && \
-    cp -fp "$BRIDGE_SRC/i386-windows/lsteamclient.dll" "$NR_SUPPORT/runtime/lib/wine/i386-windows/"
-  [ -f "$BRIDGE_SRC/x86_64-unix/lsteamclient.so" ] && \
-    cp -fp "$BRIDGE_SRC/x86_64-unix/lsteamclient.so" "$NR_SUPPORT/runtime/lib/wine/x86_64-unix/"
+  copied_lsc_dll=0
+  if [ -f "$BRIDGE_SRC/x86_64-windows/lsteamclient.dll" ]; then
+    cp -fp "$BRIDGE_SRC/x86_64-windows/lsteamclient.dll" "$STAGE_RUNTIME/lib/wine/x86_64-windows/"
+    copied_lsc_dll=1
+  elif [ -f "$BRIDGE_SRC/lsteamclient.dll" ]; then
+    cp -fp "$BRIDGE_SRC/lsteamclient.dll" "$STAGE_RUNTIME/lib/wine/x86_64-windows/"
+    copied_lsc_dll=1
+  fi
+  if [ -f "$BRIDGE_SRC/i386-windows/lsteamclient.dll" ] && [ -d "$STAGE_RUNTIME/lib/wine/i386-windows" ]; then
+    cp -fp "$BRIDGE_SRC/i386-windows/lsteamclient.dll" "$STAGE_RUNTIME/lib/wine/i386-windows/"
+  fi
+  copied_lsc_so=0
+  if [ -f "$BRIDGE_SRC/x86_64-unix/lsteamclient.so" ]; then
+    cp -fp "$BRIDGE_SRC/x86_64-unix/lsteamclient.so" "$STAGE_RUNTIME/lib/wine/x86_64-unix/"
+    copied_lsc_so=1
+  fi
+  if [ "$copied_lsc_dll" -ne 1 ] || [ "$copied_lsc_so" -ne 1 ]; then
+    echo "Error: NotProton bridge at $BRIDGE_SRC is missing lsteamclient.dll or x86_64-unix/lsteamclient.so." >&2
+    exit 1
+  fi
 
   patched_ntdll_dir=""
   if [ "$FORCE_PATCH_NTDLL" -eq 0 ]; then
@@ -195,9 +220,9 @@ if [ "$DRY_RUN" -eq 0 ]; then
   fi
   if [ -n "$patched_ntdll_dir" ]; then
     echo "    Using NotProton patched CrossOver 26.3 ntdll.dll from: $patched_ntdll_dir"
-    cp -fp "$patched_ntdll_dir/x86_64-windows/ntdll.dll" "$NR_SUPPORT/runtime/lib/wine/x86_64-windows/ntdll.dll"
-    if [ -f "$patched_ntdll_dir/i386-windows/ntdll.dll" ] && [ -d "$NR_SUPPORT/runtime/lib/wine/i386-windows" ]; then
-      cp -fp "$patched_ntdll_dir/i386-windows/ntdll.dll" "$NR_SUPPORT/runtime/lib/wine/i386-windows/ntdll.dll"
+    cp -fp "$patched_ntdll_dir/x86_64-windows/ntdll.dll" "$STAGE_RUNTIME/lib/wine/x86_64-windows/ntdll.dll"
+    if [ -f "$patched_ntdll_dir/i386-windows/ntdll.dll" ] && [ -d "$STAGE_RUNTIME/lib/wine/i386-windows" ]; then
+      cp -fp "$patched_ntdll_dir/i386-windows/ntdll.dll" "$STAGE_RUNTIME/lib/wine/i386-windows/ntdll.dll"
     fi
   elif [ -x "$SCRIPT_DIR/patch_ntdll.sh" ]; then
     if [ "$FORCE_PATCH_NTDLL" -eq 1 ]; then
@@ -205,7 +230,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
     else
       echo "    No pre-staged 26.3 ntdll.dll in $BRIDGE_SRC/wine/26.3*; trying scripts/patch_ntdll.sh..."
     fi
-    if ! "$SCRIPT_DIR/patch_ntdll.sh" "$NR_SUPPORT/runtime"; then
+    if ! "$SCRIPT_DIR/patch_ntdll.sh" "$STAGE_RUNTIME"; then
       echo "Error: Could not patch ntdll.dll via scripts/patch_ntdll.sh." >&2
       echo "Set up CrossOver 26.3 in NotProton (so bridge/wine/26.3* exists) or install mingw-w64 + NotProton/ntdll-patch." >&2
       exit 1
@@ -214,6 +239,19 @@ if [ "$DRY_RUN" -eq 0 ]; then
     echo "Error: No CrossOver 26.3 patched ntdll.dll found under $BRIDGE_SRC/wine/26.3* and patch_ntdll.sh unavailable." >&2
     exit 1
   fi
+
+  # Atomically swap staged runtime into place so failures never destroy a working install.
+  rm -rf "$OLD_RUNTIME"
+  if [ -e "$NR_SUPPORT/runtime" ]; then
+    mv "$NR_SUPPORT/runtime" "$OLD_RUNTIME"
+  fi
+  if mv "$STAGE_RUNTIME" "$NR_SUPPORT/runtime"; then
+    rm -rf "$OLD_RUNTIME" 2>/dev/null || true
+  else
+    [ ! -e "$OLD_RUNTIME" ] || mv "$OLD_RUNTIME" "$NR_SUPPORT/runtime" || true
+    exit 1
+  fi
+  trap - EXIT
 else
   if [ "$FORCE_PATCH_NTDLL" -eq 1 ]; then
     echo "[dry-run] copy lsteamclient.{dll,so} and patch Recall's own ntdll.dll via scripts/patch_ntdll.sh"
