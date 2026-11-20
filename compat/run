@@ -479,10 +479,28 @@ export DXMT_PIPELINE_CACHE_PREWARM_LIMIT="${DXMT_PIPELINE_CACHE_PREWARM_LIMIT:-1
 export DXMT_PIPELINE_CACHE_PREWARM_MS="${DXMT_PIPELINE_CACHE_PREWARM_MS:-10000}"
 export DXMT_METALFX_GPU_AFTER_HANG="${DXMT_METALFX_GPU_AFTER_HANG:-1}"
 export DXMT_GPU_ERROR_DETAIL="${DXMT_GPU_ERROR_DETAIL:-1}"
-export DXMT_LOG_LEVEL="${DXMT_LOG_LEVEL:-error}"
-export DXMT_LOG_PATH="${DXMT_LOG_PATH:-none}"
+if [ "${NOTRECALL_LOG_GRAPHICS:-0}" = "1" ]; then
+  export DXMT_LOG_LEVEL="${DXMT_LOG_LEVEL:-info}"
+  if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+    mkdir -p "$STEAM_COMPAT_DATA_PATH/dxmt-logs" 2>/dev/null || true
+    export DXMT_LOG_PATH="${DXMT_LOG_PATH:-$STEAM_COMPAT_DATA_PATH/dxmt-logs}"
+  else
+    export DXMT_LOG_PATH="${DXMT_LOG_PATH:-none}"
+  fi
+else
+  export DXMT_LOG_LEVEL="${DXMT_LOG_LEVEL:-error}"
+  export DXMT_LOG_PATH="${DXMT_LOG_PATH:-none}"
+fi
 [ -n "$exe_name" ] && export DXMT_GPU_LOST_EXIT="${DXMT_GPU_LOST_EXIT:-$exe_name}"
-export WINEDEBUG="${WINEDEBUG:--all}"
+if [ "${NOTRECALL_LOG_CRASHES:-0}" = "1" ] && [ -z "${WINEDEBUG:-}" ]; then
+  export WINEDEBUG="-all,err+all,+seh,+loaddll,+timestamp,+pid"
+else
+  export WINEDEBUG="${WINEDEBUG:--all}"
+fi
+if [ "${NOTRECALL_LOG_MOUSE:-0}" = "1" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+  mkdir -p "$STEAM_COMPAT_DATA_PATH/input-logs" 2>/dev/null || true
+  export WINEMAC_INPUT_STATS="${WINEMAC_INPUT_STATS:-$STEAM_COMPAT_DATA_PATH/input-logs}"
+fi
 if [ "${MTL_HUD_ENABLED:-0}" = "1" ]; then
   export MTL_HUD_DISABLE_MENU_BAR="${MTL_HUD_DISABLE_MENU_BAR:-1}"
   export MTL_HUD_ELEMENTS="${MTL_HUD_ELEMENTS:-device,rosetta,layersize,memory,gamemode,fps,gputime,frameinterval,frameintervalgraph,shaders}"
@@ -497,10 +515,10 @@ posix_to_winpath() {
 }
 
 
-# Seed Overwatch's Settings_v0.ini once with Recall's candidate baseline & display defaults
-# (1920x1200 on 16:10 MacBooks, 1920x1080 on 16:9 monitors; Low preset; 600 FPS cap; VSync off;
-# DynamicRenderScale off), then read the active FullScreenWidth/Height for dxmt.conf.
-# Subsequent launches keep any resolution or graphics changes the player made in Overwatch.
+# Seed Overwatch's Settings_v0.ini with Recall's baseline & per-display resolution/refresh
+# memory + fit-to-screen clamping (matching Recall's portable_preferences.h).
+# Remembers each display's resolution & refresh rate in notrecall-display.json, clamps
+# oversized resolutions to fit the current main display, and keeps dxmt.conf in sync.
 ow_canvas_w=""
 ow_canvas_h=""
 seed_overwatch_preferences() {
@@ -508,53 +526,153 @@ seed_overwatch_preferences() {
   [ -n "${WINEPREFIX:-}" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ] || return 0
   [ -x /usr/bin/perl ] || return 0
 
-  def_info="${NOTRECALL_TEST_DISPLAY_DEFAULT:-}"
-  if [ -z "$def_info" ] && [ -x "$nr_helpers/notrecall-sysinfo" ]; then
-    def_info=$("$nr_helpers/notrecall-sysinfo" display-default 2>/dev/null || true)
+  screen_id="default"
+  def_w=1920; def_h=1200; def_hz=120; max_w=16384; max_h=16384
+  if [ -n "${NOTRECALL_TEST_DISPLAY_INFO:-}" ]; then
+    set -- $NOTRECALL_TEST_DISPLAY_INFO
+    screen_id="${1:-default}"; def_w="${2:-1920}"; def_h="${3:-1200}"
+    def_hz="${4:-120}"; max_w="${5:-16384}"; max_h="${6:-16384}"
+  elif [ -n "${NOTRECALL_TEST_DISPLAY_DEFAULT:-}" ]; then
+    set -- $NOTRECALL_TEST_DISPLAY_DEFAULT
+    def_w="${1:-1920}"; def_h="${2:-1200}"; def_hz="${3:-120}"
+  elif [ -x "$nr_helpers/notrecall-sysinfo" ]; then
+    info=$("$nr_helpers/notrecall-sysinfo" display-info 2>/dev/null || true)
+    if [ -n "$info" ]; then
+      set -- $info
+      screen_id="${1:-default}"; def_w="${2:-1920}"; def_h="${3:-1200}"
+      def_hz="${4:-120}"; max_w="${5:-16384}"; max_h="${6:-16384}"
+    fi
   fi
-  set -- $def_info
-  def_w="${1:-1920}"
-  def_h="${2:-1200}"
-  def_hz="${3:-120}"
   case "$def_w" in ''|*[!0-9]*) def_w=1920 ;; esac
   case "$def_h" in ''|*[!0-9]*) def_h=1200 ;; esac
   case "$def_hz" in ''|*[!0-9]*) def_hz=120 ;; esac
+  case "$max_w" in ''|*[!0-9]*) max_w=16384 ;; esac
+  case "$max_h" in ''|*[!0-9]*) max_h=16384 ;; esac
 
   settings_dir="$WINEPREFIX/drive_c/users/steamuser/Documents/Overwatch/Settings"
   settings_ini="$settings_dir/Settings_v0.ini"
+  state_file="$STEAM_COMPAT_DATA_PATH/notrecall-display.state"
   seed_marker="$STEAM_COMPAT_DATA_PATH/.notrecall-ow-baseline-seeded"
   backup_ini="$STEAM_COMPAT_DATA_PATH/Settings_v0.before-baseline.ini"
+  mkdir -p "$settings_dir" 2>/dev/null || return 0
 
-  if [ ! -f "$seed_marker" ] || [ ! -f "$settings_ini" ]; then
-    mkdir -p "$settings_dir" 2>/dev/null || return 0
-    if [ ! -L "$settings_ini" ]; then
-      /usr/bin/perl -e '
-        my ($path, $backup, $w, $h, $hz) = @ARGV;
-        my $orig = "";
-        my $existed = (-f $path);
-        if ($existed) {
-          my $size = -s $path;
-          exit 0 if !defined $size || $size > 1048576;
-          open my $in, "<:raw", $path or exit 0;
-          local $/;
-          $orig = <$in>;
-          close $in;
-          $orig = "" if !defined $orig;
+  if [ ! -L "$settings_ini" ]; then
+    dims=$(/usr/bin/perl -e '
+      my ($path, $backup, $state_path, $seed_marker, $screen, $def_w, $def_h, $def_hz, $max_w, $max_h) = @ARGV;
+      my %displays;
+      my ($last_screen, $last_w, $last_h, $last_hz, $last_gpu, $seeded) = ("", 0, 0, 0, "", (-f $seed_marker ? 1 : 0));
+      if (-f $state_path && open my $sf, "<:raw", $state_path) {
+        while (my $line = <$sf>) {
+          chomp $line;
+          if ($line =~ /^display\t([^\t]+)\t([0-9]+)\t([0-9]+)\t([0-9]+)$/) {
+            $displays{$1} = [$2 + 0, $3 + 0, $4 + 0];
+          } elsif ($line =~ /^last\t([^\t]*)\t([0-9]+)\t([0-9]+)\t([0-9]+)\t(.*)$/) {
+            ($last_screen, $last_w, $last_h, $last_hz, $last_gpu) = ($1, $2 + 0, $3 + 0, $4 + 0, $5);
+          } elsif ($line eq "seeded\t1") {
+            $seeded = 1;
+          }
         }
-        my $nl = ($orig =~ /\r\n/) ? "\r\n" : "\n";
-        my @lines = length($orig) ? split(/\Q$nl\E/, $orig, -1) : ("[Render.13]", "");
-        my ($rs, $re) = (-1, scalar(@lines));
-        for my $i (0 .. $#lines) {
+        close $sf;
+      }
+
+      my $orig = "";
+      my $existed = (-f $path);
+      if ($existed) {
+        my $size = -s $path;
+        exit 0 if !defined $size || $size > 1048576;
+        open my $in, "<:raw", $path or exit 0;
+        local $/;
+        $orig = <$in>;
+        close $in;
+        $orig = "" if !defined $orig;
+      }
+      my $nl = ($orig =~ /\r\n/) ? "\r\n" : "\n";
+      my @lines = length($orig) ? split(/\Q$nl\E/, $orig, -1) : ("[Render.13]", "");
+
+      my $get_val = sub {
+        my ($sec_prefix, $key) = @_;
+        my $in = 0;
+        for my $raw (@lines) {
+          (my $t = $raw) =~ s/^\s+|\s+$//g;
+          if ($t =~ /^\[/) { $in = (index($t, $sec_prefix) == 0); next; }
+          next unless $in;
+          if ($t =~ /^\Q$key\E\s*=\s*"?([^"]*)"?$/) { return $1; }
+        }
+        return undef;
+      };
+
+      my $cur_gpu = ($get_val->("[GPU.", "GPUName") // "") . "|" . ($get_val->("[GPU.", "GPUVenderID") // "");
+      my $cur_w   = $get_val->("[Render.13]", "FullScreenWidth");
+      my $cur_h   = $get_val->("[Render.13]", "FullScreenHeight");
+      my $cur_hz  = $get_val->("[Render.13]", "FullScreenRefresh");
+
+      # If player changed resolution or refresh in-game (same GPU), save it for last_screen.
+      if ($seeded && $last_screen ne "" && $last_w > 0 && $last_h > 0 && $cur_gpu eq $last_gpu) {
+        my $gw = (defined $cur_w && $cur_w =~ /^[0-9]{3,5}$/ && $cur_w >= 640 && $cur_w <= 16384) ? $cur_w + 0 : 0;
+        my $gh = (defined $cur_h && $cur_h =~ /^[0-9]{3,5}$/ && $cur_h >= 480 && $cur_h <= 16384) ? $cur_h + 0 : 0;
+        my $ghz = (defined $cur_hz && $cur_hz =~ /^[0-9]{2,3}$/ && $cur_hz >= 24) ? $cur_hz + 0 : ($displays{$last_screen} ? $displays{$last_screen}[2] : $last_hz);
+        if ($gw && $gh && ($gw != $last_w || $gh != $last_h || ($ghz && $ghz != $last_hz))) {
+          $displays{$last_screen} = [$gw, $gh, $ghz || $def_hz];
+        }
+      }
+
+      my ($want_w, $want_h, $want_hz) = $displays{$screen} ? @{$displays{$screen}} : ($def_w + 0, $def_h + 0, $def_hz + 0);
+      $displays{$screen} = [$want_w, $want_h, $want_hz];
+
+      # Recall fitResolution(): clamp oversized resolutions to fit the current display in Wine.
+      my ($game_w, $game_h) = ($want_w, $want_h);
+      if ($game_w > $max_w || $game_h > $max_h) {
+        my @opts = ([1920,1080],[1920,1200],[2560,1440],[2560,1600],[3840,2160],[3840,2400]);
+        my ($bw, $bh) = (0, 0);
+        for my $same_shape (1, 0) {
+          last if $bw;
+          for my $o (@opts) {
+            my ($ow, $oh) = @$o;
+            next if $ow > $max_w || $oh > $max_h;
+            next if $same_shape && ($ow * $want_h != $oh * $want_w);
+            if ($ow * $oh > $bw * $bh) { ($bw, $bh) = ($ow, $oh); }
+          }
+        }
+        ($game_w, $game_h) = ($bw, $bh) if $bw;
+      }
+
+      my ($rs, $re) = (-1, scalar(@lines));
+      for my $i (0 .. $#lines) {
+        (my $t = $lines[$i]) =~ s/^\s+|\s+$//g;
+        if ($rs < 0 && $t eq "[Render.13]") { $rs = $i + 1; }
+        elsif ($rs >= 0 && $t =~ /^\[/) { $re = $i; last; }
+      }
+      if ($rs < 0) {
+        push @lines, "" if @lines && $lines[-1] ne "";
+        push @lines, "[Render.13]";
+        $rs = scalar(@lines);
+        $re = $rs;
+      }
+      my $find_key = sub {
+        my ($s, $e, $key) = @_;
+        for my $i ($s .. $e - 1) {
           (my $t = $lines[$i]) =~ s/^\s+|\s+$//g;
-          if ($rs < 0 && $t eq "[Render.13]") { $rs = $i + 1; }
-          elsif ($rs >= 0 && $t =~ /^\[/) { $re = $i; last; }
+          return $i if $t =~ /^\Q$key\E\s*=/;
         }
-        if ($rs < 0) {
-          push @lines, "" if @lines && $lines[-1] ne "";
-          push @lines, "[Render.13]";
-          $rs = scalar(@lines);
-          $re = $rs;
+        return -1;
+      };
+      my $last = $rs;
+      for my $i ($rs .. $re - 1) { $last = $i + 1 if $lines[$i] =~ /\S/; }
+      my $changed = !$existed;
+      my $set_key = sub {
+        my ($k, $v, $only_missing) = @_;
+        my $idx = $find_key->($rs, $re, $k);
+        return if $only_missing && $idx >= 0;
+        my $line = "$k = \"$v\"";
+        if ($idx >= 0) {
+          if ($lines[$idx] ne $line) { $lines[$idx] = $line; $changed = 1; }
+        } else {
+          splice(@lines, $last, 0, $line);
+          $last++; $re++; $changed = 1;
         }
+      };
+
+      if (!$seeded || !$existed) {
         my %launch = (
           UseCustomWorldScale     => "1",
           DynamicRenderScale      => "0",
@@ -562,11 +680,11 @@ seed_overwatch_preferences() {
           FullscreenWindowEnabled => "0",
           WindowedFullscreen      => "0",
           WindowMode              => "0",
-          FullScreenWidth         => $w,
-          FullScreenHeight        => $h,
-          FullScreenRefresh       => $hz,
-          WindowedWidth           => $w,
-          WindowedHeight          => $h,
+          FullScreenWidth         => $game_w,
+          FullScreenHeight        => $game_h,
+          FullScreenRefresh       => $want_hz,
+          WindowedWidth           => $game_w,
+          WindowedHeight          => $game_h,
           WindowedPosX            => "100",
           WindowedPosY            => "100",
         );
@@ -578,38 +696,24 @@ seed_overwatch_preferences() {
           VerticalSyncEnabled => "0",
           ShowFPSCounter      => "1",
           ShowRTT             => "1",
-          WindowedRefresh     => $hz,
+          WindowedRefresh     => $want_hz,
         );
-        my $find_key = sub {
-          my ($s, $e, $key) = @_;
-          for my $i ($s .. $e - 1) {
-            (my $t = $lines[$i]) =~ s/^\s+|\s+$//g;
-            return $i if $t =~ /^\Q$key\E\s*=/;
-          }
-          return -1;
-        };
-        my $last = $rs;
-        for my $i ($rs .. $re - 1) { $last = $i + 1 if $lines[$i] =~ /\S/; }
-        my $changed = !$existed;
-        # Seed launch display defaults (overwrite on initial seed) and missing baseline keys.
-        for my $k (sort keys %launch) {
-          my $idx = $find_key->($rs, $re, $k);
-          my $line = "$k = \"$launch{$k}\"";
-          if ($idx >= 0) {
-            if ($lines[$idx] ne $line) { $lines[$idx] = $line; $changed = 1; }
-          } else {
-            splice(@lines, $last, 0, $line);
-            $last++; $re++; $changed = 1;
-          }
+        for my $k (sort keys %launch)   { $set_key->($k, $launch{$k}, 0); }
+        for my $k (sort keys %baseline) { $set_key->($k, $baseline{$k}, 1); }
+      } else {
+        # Always enforce fitted per-display resolution/refresh and clamp WindowedWidth/Height.
+        $set_key->("FullScreenWidth",   $game_w, 0);
+        $set_key->("FullScreenHeight",  $game_h, 0);
+        $set_key->("FullScreenRefresh", $want_hz, 0);
+        my $ww = $get_val->("[Render.13]", "WindowedWidth");
+        my $wh = $get_val->("[Render.13]", "WindowedHeight");
+        if (!defined $ww || $ww !~ /^[0-9]+$/ || $ww > $max_w || !defined $wh || $wh !~ /^[0-9]+$/ || $wh > $max_h) {
+          $set_key->("WindowedWidth",  $game_w, 0);
+          $set_key->("WindowedHeight", $game_h, 0);
         }
-        for my $k (sort keys %baseline) {
-          my $idx = $find_key->($rs, $re, $k);
-          if ($idx < 0) {
-            splice(@lines, $last, 0, "$k = \"$baseline{$k}\"");
-            $last++; $re++; $changed = 1;
-          }
-        }
-        exit 0 if !$changed;
+      }
+
+      if ($changed) {
         if ($existed && !-f $backup) {
           if (open my $bf, ">:raw", "$backup.tmp.$$") {
             print $bf $orig;
@@ -620,31 +724,26 @@ seed_overwatch_preferences() {
         my $updated = join($nl, @lines);
         $updated .= $nl if $updated !~ /\Q$nl\E\z/;
         my $tmp = "$path.nr-tmp.$$";
-        open my $out, ">:raw", $tmp or exit 0;
-        print $out $updated;
-        close $out or do { unlink $tmp; exit 0; };
-        rename $tmp, $path or unlink $tmp;
-      ' "$settings_ini" "$backup_ini" "$def_w" "$def_h" "$def_hz" >> "$log" 2>&1 || true
-      [ -f "$settings_ini" ] && : > "$seed_marker" 2>/dev/null || true
-    fi
-  fi
-
-  # Read active FullScreenWidth/Height from Settings_v0.ini so dxmt.conf matches.
-  if [ -f "$settings_ini" ] && [ ! -L "$settings_ini" ]; then
-    dims=$(/usr/bin/perl -e '
-      my ($path) = @ARGV;
-      open my $in, "<:raw", $path or exit 0;
-      my ($in_r, $w, $h) = (0, "", "");
-      while (my $line = <$in>) {
-        $line =~ s/^\s+|\s+$//g;
-        if ($line =~ /^\[/) { $in_r = ($line eq "[Render.13]"); next; }
-        next unless $in_r;
-        if ($line =~ /^FullScreenWidth\s*=\s*"?([0-9]{3,5})"?$/) { $w = $1; }
-        elsif ($line =~ /^FullScreenHeight\s*=\s*"?([0-9]{3,5})"?$/) { $h = $1; }
+        if (open my $out, ">:raw", $tmp) {
+          print $out $updated;
+          close $out and rename $tmp, $path or unlink $tmp;
+        }
       }
-      close $in;
-      print "$w $h\n" if $w && $h && $w >= 640 && $h >= 480 && $w <= 16384 && $h <= 16384;
-    ' "$settings_ini" 2>/dev/null || true)
+
+      # Persist per-display state atomically.
+      my $stmp = "$state_path.tmp.$$";
+      if (open my $so, ">:raw", $stmp) {
+        print $so "seeded\t1\n";
+        print $so "last\t$screen\t$game_w\t$game_h\t$want_hz\t$cur_gpu\n";
+        for my $k (sort keys %displays) {
+          my ($dw, $dh, $dhz) = @{$displays{$k}};
+          print $so "display\t$k\t$dw\t$dh\t$dhz\n";
+        }
+        close $so and rename $stmp, $state_path or unlink $stmp;
+      }
+      print "$game_w $game_h\n";
+    ' "$settings_ini" "$backup_ini" "$state_file" "$seed_marker" "$screen_id" "$def_w" "$def_h" "$def_hz" "$max_w" "$max_h" 2>> "$log" || true)
+    [ -f "$settings_ini" ] && : > "$seed_marker" 2>/dev/null || true
     set -- $dims
     ow_canvas_w="${1:-$def_w}"
     ow_canvas_h="${2:-$def_h}"
@@ -894,17 +993,25 @@ export WINEDLLOVERRIDES="${vc_overrides}${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}d
 
 # Dynamic Recall raw mouse configuration from the launched .exe basename (or NOTRECALL_MOUSE_EXE).
 mouse_mode="${NOTRECALL_MOUSE_MODE:-hid}"
+mouse_interval_us=0
+case "${NOTRECALL_MOUSE_RATE:-all}" in
+  2000) mouse_interval_us=500 ;;
+  1000) mouse_interval_us=1000 ;;
+  500)  mouse_interval_us=2000 ;;
+  250)  mouse_interval_us=4000 ;;
+  *)    mouse_interval_us=0 ;;
+esac
 if [ -n "$exe_name" ] && [ "$mouse_mode" != "off" ]; then
   export WINEMAC_MOUSELOOK="$exe_name"
   case "$mouse_mode" in
     hid)
       export WINEMAC_INPUT_VARIANT="precise"
       export WINEMAC_RAW_SOURCE="hid"
-      export WINEMAC_MOUSELOOK_RAW_INTERVAL_US="${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-0}"
+      export WINEMAC_MOUSELOOK_RAW_INTERVAL_US="${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-$mouse_interval_us}"
       ;;
     precise)
       export WINEMAC_INPUT_VARIANT="precise"
-      export WINEMAC_MOUSELOOK_RAW_INTERVAL_US="${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-0}"
+      export WINEMAC_MOUSELOOK_RAW_INTERVAL_US="${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-$mouse_interval_us}"
       unset WINEMAC_RAW_SOURCE || true
       ;;
     classic)
@@ -1061,7 +1168,7 @@ elif [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}
     mkdir -p "$game_app/Contents/MacOS" "$game_app/Contents/Resources"
     cp -c "$WINELOADER" "$game_app/Contents/MacOS/wine" 2>/dev/null || cp "$WINELOADER" "$game_app/Contents/MacOS/wine"
     chmod u+w "$game_app/Contents/MacOS/wine" 2>/dev/null || true
-    patch_macho_uuid "$game_app/Contents/MacOS/wine" "com.notrecall.game.$app_id"
+    patch_macho_uuid "$game_app/Contents/MacOS/wine" "io.shreyash.notrecall.game.$app_id"
     # Preserve Recall's @loader_path/../lib LC_RPATH from Contents/MacOS/wine.
     ln -sfn "$nr_runtime/lib" "$game_app/Contents/lib" 2>/dev/null || true
     # CrossOver 26's wine looks for ntdll.so and unix libs right next to itself.
@@ -1085,7 +1192,7 @@ elif [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}
 <dict>
   <key>CFBundleName</key><string>$game_name_xml</string>
   <key>CFBundleDisplayName</key><string>$game_name_xml</string>
-  <key>CFBundleIdentifier</key><string>com.notrecall.game.$app_id</string>
+  <key>CFBundleIdentifier</key><string>io.shreyash.notrecall.game.$app_id</string>
   <key>CFBundleExecutable</key><string>wine</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHighResolutionCapable</key><true/>

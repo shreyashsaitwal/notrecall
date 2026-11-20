@@ -32,6 +32,22 @@ struct ContentView: View {
                 )
             }
         }
+        .alert("Force quit Overwatch?", isPresented: $state.confirmForceQuit) {
+            Button("Cancel", role: .cancel) {}
+            Button("Force Quit", role: .destructive) {
+                Task { await state.forceQuitOverwatch() }
+            }
+        } message: {
+            Text("Use this when the game stops responding. If you’re in a match, you’ll leave it.")
+        }
+        .alert("Reset display settings?", isPresented: $state.confirmResetDisplay) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset") {
+                Task { await state.resetOverwatchDisplaySettings() }
+            }
+        } message: {
+            Text("Overwatch will open full screen at \(state.defaultOverwatchResolutionLabel) the next time it starts. Your graphics quality and FPS settings stay as they are.")
+        }
     }
 
     private var statusTab: some View {
@@ -127,6 +143,8 @@ struct ContentView: View {
                     }
                     .padding(.vertical, 4)
                 }
+
+                troubleshootingCard
 
                 if let progress = state.downloadProgress {
                     GroupBox {
@@ -358,6 +376,43 @@ struct ContentView: View {
                     state.openOverwatchHighlights()
                 }
                 .controlSize(.small)
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private var troubleshootingCard: some View {
+        GroupBox("Troubleshooting") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Force Quit Overwatch").font(.body)
+                        Text("If the game stops responding.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Force Quit", role: .destructive) {
+                        state.confirmForceQuit = true
+                    }
+                    .controlSize(.small)
+                    .disabled(state.isBusy)
+                }
+                Divider()
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Reset Display Settings…").font(.body)
+                        Text("If Overwatch opens to a black screen or at the wrong size.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Reset") {
+                        state.confirmResetDisplay = true
+                    }
+                    .controlSize(.small)
+                    .disabled(state.isBusy)
+                }
             }
             .padding(.vertical, 2)
         }

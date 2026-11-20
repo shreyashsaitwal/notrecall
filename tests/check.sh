@@ -330,6 +330,75 @@ grep -Fq 'dxgi.fullscreenCanvasWidth = 2560' "$gm_data/notrecall-dxmt.conf"
 grep -Fq 'dxgi.fullscreenCanvasHeight = 1440' "$gm_data/notrecall-dxmt.conf"
 echo "    OK: Recall native WINE_GAME_MODE, Overwatch Settings_v0.ini baseline seeding, and dxmt.conf canvas sync"
 
+# Case 8: Mouse polling rate cap, per-display resolution/refresh memory + fit-to-screen clamping, and diagnostic logging presets.
+pd_data="$test_root/compatdata/pd-ow"
+mkdir -p "$pd_data"
+pd_env1="$test_root/pd1.env"
+
+# Display A (4K 16:9 144Hz monitor) with 1000 Hz mouse cap and all 3 diagnostic logging presets.
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$pd_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTRECALL_MOUSE_RATE=1000 \
+  NOTRECALL_LOG_CRASHES=1 \
+  NOTRECALL_LOG_GRAPHICS=1 \
+  NOTRECALL_LOG_MOUSE=1 \
+  NOTRECALL_TEST_DISPLAY_INFO="monA-1-1 1920 1080 144 3840 2160" \
+  TEST_ENV_OUT="$pd_env1" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+assert_env "$pd_env1" "WINEMAC_MOUSELOOK_RAW_INTERVAL_US=1000"
+assert_env "$pd_env1" "WINEDEBUG=-all,err+all,+seh,+loaddll,+timestamp,+pid"
+assert_env "$pd_env1" "DXMT_LOG_LEVEL=info"
+assert_env "$pd_env1" "DXMT_LOG_PATH=$pd_data/dxmt-logs"
+assert_env "$pd_env1" "WINEMAC_INPUT_STATS=$pd_data/input-logs"
+[ -d "$pd_data/dxmt-logs" ]
+[ -d "$pd_data/input-logs" ]
+
+pd_ini="$pd_data/pfx/drive_c/users/steamuser/Documents/Overwatch/Settings/Settings_v0.ini"
+grep -Fq 'FullScreenWidth = "1920"' "$pd_ini"
+grep -Fq 'FullScreenHeight = "1080"' "$pd_ini"
+grep -Fq 'FullScreenRefresh = "144"' "$pd_ini"
+
+# Player chooses 3840x2160 on Display A, then switches to Display B (16:10 120Hz MacBook, max 3024x1964).
+sed -i '' 's/FullScreenWidth = "1920"/FullScreenWidth = "3840"/; s/FullScreenHeight = "1080"/FullScreenHeight = "2160"/' "$pd_ini"
+pd_env2="$test_root/pd2.env"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$pd_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTRECALL_MOUSE_RATE=500 \
+  NOTRECALL_TEST_DISPLAY_INFO="macB-2-2 1920 1200 120 3024 1964" \
+  TEST_ENV_OUT="$pd_env2" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+assert_env "$pd_env2" "WINEMAC_MOUSELOOK_RAW_INTERVAL_US=2000"
+# Display B gets its own 1920x1200 @ 120Hz default without losing Display A's 3840x2160.
+grep -Fq 'FullScreenWidth = "1920"' "$pd_ini"
+grep -Fq 'FullScreenHeight = "1200"' "$pd_ini"
+grep -Fq 'FullScreenRefresh = "120"' "$pd_ini"
+grep -Fq 'dxgi.fullscreenCanvasWidth = 1920' "$pd_data/notrecall-dxmt.conf"
+grep -Fq 'dxgi.fullscreenCanvasHeight = 1200' "$pd_data/notrecall-dxmt.conf"
+
+# Switch back to Display A, but with a smaller max display size (2560x1440) -> clamps 3840x2160 down to 2560x1440!
+pd_env3="$test_root/pd3.env"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$pd_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTRECALL_TEST_DISPLAY_INFO="monA-1-1 1920 1080 144 2560 1440" \
+  TEST_ENV_OUT="$pd_env3" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+grep -Fq 'FullScreenWidth = "2560"' "$pd_ini"
+grep -Fq 'FullScreenHeight = "1440"' "$pd_ini"
+grep -Fq 'FullScreenRefresh = "144"' "$pd_ini"
+grep -Fq 'dxgi.fullscreenCanvasWidth = 2560' "$pd_data/notrecall-dxmt.conf"
+grep -Fq 'dxgi.fullscreenCanvasHeight = 1440' "$pd_data/notrecall-dxmt.conf"
+echo "    OK: Mouse polling cap, per-display resolution/refresh memory + clamping, and diagnostic logging presets"
+
+
 
 
 echo "==> Testing scripts/install.sh --dry-run against a mock Recall.app bundle"

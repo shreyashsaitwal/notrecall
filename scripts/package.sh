@@ -119,7 +119,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key><string>com.notrecall.app</string>
+  <key>CFBundleIdentifier</key><string>io.shreyash.notrecall</string>
   <key>CFBundleName</key><string>NotRecall</string>
   <key>CFBundleDisplayName</key><string>NotRecall</string>
   <key>CFBundleExecutable</key><string>NotRecallApp</string>

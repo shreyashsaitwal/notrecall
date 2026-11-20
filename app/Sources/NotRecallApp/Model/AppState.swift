@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreGraphics
 import Foundation
 import UniformTypeIdentifiers
 
@@ -51,6 +52,8 @@ final class AppState: ObservableObject {
     @Published var latestRecallRelease: RecallReleaseInfo?
     @Published var isCheckingForUpdates = false
     @Published var showWhatsNewSheet = false
+    @Published var confirmForceQuit = false
+    @Published var confirmResetDisplay = false
     @Published var downloadProgress: Double?
     @Published var downloadStatusText = ""
     @Published var steamToolInstalled = false
@@ -355,6 +358,146 @@ final class AppState: ObservableObject {
         try? fm.createDirectory(at: overwatchHighlightsDir, withIntermediateDirectories: true)
         NSWorkspace.shared.open(overwatchHighlightsDir)
         statusMessage = "Opened ~/Movies/Overwatch."
+    }
+
+    var defaultOverwatchResolutionLabel: String {
+        let (w, h, _) = Self.mainDisplayDefault()
+        return "\(w) × \(h)"
+    }
+
+    func forceQuitOverwatch() async {
+        isBusy = true
+        defer { isBusy = false }
+        let libraries = Self.discoverSteamLibraries(home: home)
+        let wineserver = notRecallSupport.appending(path: "runtime/bin/wineserver")
+        await Task.detached {
+            let pkill = Process()
+            pkill.executableURL = URL(filePath: "/usr/bin/pkill")
+            pkill.arguments = ["-9", "-i", "Overwatch.exe"]
+            pkill.standardOutput = FileHandle.nullDevice
+            pkill.standardError = FileHandle.nullDevice
+            try? pkill.run()
+            pkill.waitUntilExit()
+
+            let fm = FileManager.default
+            guard fm.isExecutableFile(atPath: wineserver.path) else { return }
+            for steamapps in libraries {
+                let pfx = steamapps.appending(path: "compatdata/2357570/pfx")
+                guard fm.fileExists(atPath: pfx.path) else { continue }
+                let proc = Process()
+                proc.executableURL = wineserver
+                proc.arguments = ["-k"]
+                var env = ProcessInfo.processInfo.environment
+                env["WINEPREFIX"] = pfx.path
+                proc.environment = env
+                proc.standardOutput = FileHandle.nullDevice
+                proc.standardError = FileHandle.nullDevice
+                try? proc.run()
+                proc.waitUntilExit()
+            }
+        }.value
+        statusMessage = "Force quit Overwatch."
+    }
+
+    func resetOverwatchDisplaySettings() async {
+        let libraries = Self.discoverSteamLibraries(home: home)
+        let (defW, defH, defHz) = Self.mainDisplayDefault()
+        let fm = FileManager.default
+        var owCompatDirs = libraries.map { $0.appending(path: "compatdata/2357570") }
+            .filter { fm.fileExists(atPath: $0.appending(path: "pfx").path) }
+        if owCompatDirs.isEmpty, let first = libraries.first {
+            owCompatDirs = [first.appending(path: "compatdata/2357570")]
+        }
+        guard let compatDir = owCompatDirs.first else {
+            statusMessage = "No Steam library found for Overwatch."
+            return
+        }
+        let settingsDir = compatDir.appending(path: "pfx/drive_c/users/steamuser/Documents/Overwatch/Settings")
+        let iniURL = settingsDir.appending(path: "Settings_v0.ini")
+        let backupURL = compatDir.appending(path: "Settings_v0.before-display-reset.ini")
+        let stateURL = compatDir.appending(path: "notrecall-display.state")
+        do {
+            try fm.createDirectory(at: settingsDir, withIntermediateDirectories: true)
+            let orig = (try? String(contentsOf: iniURL, encoding: .utf8)) ?? "[Render.13]\n"
+            if fm.fileExists(atPath: iniURL.path) {
+                try? orig.write(to: backupURL, atomically: true, encoding: .utf8)
+            }
+            let nl = orig.contains("\r\n") ? "\r\n" : "\n"
+            var lines = orig.isEmpty ? ["[Render.13]", ""] : orig.components(separatedBy: nl)
+            var rs = -1
+            var re = lines.count
+            for i in lines.indices {
+                let t = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
+                if rs < 0 && t == "[Render.13]" { rs = i + 1 }
+                else if rs >= 0 && t.hasPrefix("[") { re = i; break }
+            }
+            if rs < 0 {
+                if let last = lines.last, !last.isEmpty { lines.append("") }
+                lines.append("[Render.13]")
+                rs = lines.count
+                re = rs
+            }
+            let updates: [(String, String)] = [
+                ("DynamicRenderScale", "0"),
+                ("FullScreenHeight", String(defH)),
+                ("FullScreenRefresh", String(defHz)),
+                ("FullScreenWidth", String(defW)),
+                ("FullscreenWindow", "0"),
+                ("FullscreenWindowEnabled", "0"),
+                ("UseCustomWorldScale", "1"),
+                ("WindowMode", "0"),
+                ("WindowedFullscreen", "0"),
+                ("WindowedHeight", String(defH)),
+                ("WindowedPosX", "100"),
+                ("WindowedPosY", "100"),
+                ("WindowedWidth", String(defW)),
+            ]
+            var last = rs
+            for i in rs..<re where !lines[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                last = i + 1
+            }
+            for (key, value) in updates {
+                let newLine = "\(key) = \"\(value)\""
+                var foundIdx: Int? = nil
+                for i in rs..<re {
+                    let t = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let eq = t.firstIndex(of: "="),
+                       t[..<eq].trimmingCharacters(in: .whitespaces) == key {
+                        foundIdx = i
+                        break
+                    }
+                }
+                if let idx = foundIdx {
+                    lines[idx] = newLine
+                } else {
+                    lines.insert(newLine, at: last)
+                    last += 1
+                    re += 1
+                }
+            }
+            var updated = lines.joined(separator: nl)
+            if !updated.hasSuffix(nl) { updated += nl }
+            try updated.write(to: iniURL, atomically: true, encoding: .utf8)
+            try? fm.removeItem(at: stateURL)
+            statusMessage = "Reset Overwatch display settings to \(defW) × \(defH) fullscreen. Your graphics quality and FPS settings were kept."
+        } catch {
+            statusMessage = "Could not reset display settings: \(error.localizedDescription)"
+        }
+    }
+
+    nonisolated private static func mainDisplayDefault() -> (Int, Int, Int) {
+        var width = 1920, height = 1200, refresh = 120
+        if let mode = CGDisplayCopyDisplayMode(CGMainDisplayID()) {
+            let mw = mode.width, mh = mode.height
+            if mh > 0 && (Double(mw) / Double(mh)) >= 1.69 {
+                height = 1080
+            }
+            let r = Int(mode.refreshRate.rounded())
+            if r >= 24 && r <= 999 {
+                refresh = r
+            }
+        }
+        return (width, height, refresh)
     }
 
     func configureOverwatchInSteam() async {
@@ -816,7 +959,10 @@ final class AppState: ObservableObject {
         var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
         guard confstr(_CS_DARWIN_USER_CACHE_DIR, &buf, buf.count) > 0 else { return [] }
         let root = URL(filePath: String(cString: buf))
-        var urls = [root.appending(path: "com.notrecall.game.\(appID)/com.apple.metal")]
+        var urls = [
+            root.appending(path: "io.shreyash.notrecall.game.\(appID)/com.apple.metal"),
+            root.appending(path: "com.notrecall.game.\(appID)/com.apple.metal")
+        ]
         if appID == "2357570" {
             urls.append(root.appending(path: "org.overwatch2mac.overwatch/com.apple.metal"))
         }

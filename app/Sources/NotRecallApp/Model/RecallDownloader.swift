@@ -37,7 +37,7 @@ final class RecallDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         let fm = FileManager.default
         let base = fm.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? fm.temporaryDirectory
-        return base.appending(path: "com.notrecall.app/downloads")
+        return base.appending(path: "notrecall/downloads")
     }
 
     static func download(
