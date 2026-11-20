@@ -107,6 +107,14 @@ elif [ -n "$target" ]; then
   exe_name=$(printf '%s' "$target" | sed -e 's|.*[/\\]||')
 fi
 
+is_overwatch_launch() {
+  [ "$app_id" = "2357570" ] && return 0
+  case "$exe_name" in
+    [Oo][Vv][Ee][Rr][Ww][Aa][Tt][Cc][Hh].[Ee][Xx][Ee]) return 0 ;;
+  esac
+  return 1
+}
+
 {
   echo "=== notrecall run $(date) ==="
   echo "verb=$verb app_id=$app_id exe=${exe_name:-unknown}"
@@ -169,6 +177,48 @@ link_fonts() {
       [ -e "$dst" ] || [ -L "$dst" ] || ln -s "$src" "$dst" 2>/dev/null || true
     done
   done
+}
+
+# Symlink Overwatch's Highlights folder to ~/Movies/Overwatch, migrating any existing clips safely.
+link_overwatch_highlights() {
+  is_overwatch_launch || return 0
+  [ -n "${WINEPREFIX:-}" ] || return 0
+  hl_target="$HOME/Movies/Overwatch"
+  hl_videos="$WINEPREFIX/drive_c/users/steamuser/Documents/Overwatch/videos"
+  hl_link="$hl_videos/overwatch"
+  mkdir -p "$hl_target" 2>/dev/null || return 0
+  if [ -L "$hl_link" ]; then
+    [ "$(readlink "$hl_link" 2>/dev/null || true)" = "$hl_target" ] && return 0
+    rm -f "$hl_link" 2>/dev/null || return 0
+  elif [ -d "$hl_link" ]; then
+    rm -f "$hl_link/.DS_Store" 2>/dev/null || true
+    for clip in "$hl_link"/* "$hl_link"/.[!.]* "$hl_link"/..?*; do
+      [ -e "$clip" ] || [ -L "$clip" ] || continue
+      base="${clip##*/}"
+      dst="$hl_target/$base"
+      if [ -e "$dst" ] || [ -L "$dst" ]; then
+        stem="${base%.*}"
+        ext="${base##*.}"
+        n=2
+        while :; do
+          if [ "$stem" != "$base" ] && [ -n "$ext" ]; then
+            dst="$hl_target/$stem $n.$ext"
+          else
+            dst="$hl_target/$base $n"
+          fi
+          [ ! -e "$dst" ] && [ ! -L "$dst" ] && break
+          n=$((n + 1))
+        done
+      fi
+      mv -- "$clip" "$dst" 2>/dev/null || return 0
+    done
+    rmdir "$hl_link" 2>/dev/null || return 0
+  elif [ -e "$hl_link" ]; then
+    return 0
+  else
+    mkdir -p "$hl_videos" 2>/dev/null || return 0
+  fi
+  ln -s "$hl_target" "$hl_link" 2>/dev/null || true
 }
 
 # Detect Microsoft native VC++ runtime DLLs installed in system32 so Wine prefers them.
@@ -356,6 +406,7 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   map_game_drive
   import_prefix_settings
   link_fonts
+  link_overwatch_highlights
 fi
 
 # 5. Stage NotProton's Steamworks bridge and legacycompat into the prefix & Steam client.
@@ -432,13 +483,6 @@ posix_to_winpath() {
   printf 'Z:%s' "$1" | tr '/' '\\'
 }
 
-is_overwatch_launch() {
-  [ "$app_id" = "2357570" ] && return 0
-  case "$exe_name" in
-    [Oo][Vv][Ee][Rr][Ww][Aa][Tt][Cc][Hh].[Ee][Xx][Ee]) return 0 ;;
-  esac
-  return 1
-}
 
 if [ -z "${DXMT_CONFIG_FILE:-}" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   if is_overwatch_launch; then
