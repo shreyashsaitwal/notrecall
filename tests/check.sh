@@ -68,6 +68,10 @@ if [ "${1:-}" = "wineboot" ]; then
   exit 0
 fi
 if [ "${1:-}" = "reg" ]; then
+  if [ "${2:-}" = "import" ] && [ -n "${TEST_REG_OUT:-}" ]; then
+    reg_base="${3#C:\\}"
+    cp -f "$WINEPREFIX/drive_c/$reg_base" "$TEST_REG_OUT" 2>/dev/null || true
+  fi
   exit 0
 fi
 env | sort > "$TEST_ENV_OUT"
@@ -164,5 +168,101 @@ assert_env "$other_env" "WINEMAC_MOUSELOOK=Cyberpunk2077.exe"
 [ ! -f "$other_data/notrecall-dxmt.conf" ]
 assert_env_absent "$other_env" "DXMT_CONFIG_FILE"
 echo "    OK: Overwatch defaults, A-series displaySync, user override merge, classic mouse, and non-OW isolation"
+
+# Case 4: Phase 2 registry QoL (LeftOptionIsAlt, WineBrowser, 1x/2x RetinaMode, Bluetooth A2DP mic routing).
+reg1_out="$test_root/reg1.reg"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ow_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTRECALL_TEST_DISPLAY_SCALE=1 \
+  NOTRECALL_TEST_BT_MIC_UID="BuiltInMicrophoneDevice" \
+  TEST_REG_OUT="$reg1_out" \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+grep -Fq '"RetinaMode"="N"' "$reg1_out"
+grep -Fq '"LeftOptionIsAlt"="Y"' "$reg1_out"
+grep -Fq '"Browsers"="/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/open"' "$reg1_out"
+grep -Fq 'winecoreaudio.drv\devices\1,BuiltInMicrophoneDevice' "$reg1_out"
+grep -Fq '"DefaultInput"="{0.0.1.00000000}.{' "$reg1_out"
+grep -Fq '"DefaultVoiceInput"="{0.0.1.00000000}.{' "$reg1_out"
+
+reg2_out="$test_root/reg2.reg"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ow_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTRECALL_TEST_DISPLAY_SCALE=2 \
+  NOTRECALL_TEST_BT_MIC_UID="none" \
+  TEST_REG_OUT="$reg2_out" \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+grep -Fq '"RetinaMode"="Y"' "$reg2_out"
+grep -Fq '"DefaultInput"=-' "$reg2_out"
+grep -Fq '"DefaultVoiceInput"=-' "$reg2_out"
+
+# Case 5: MetalFX Settings_v0.ini [GPU.6] sync, backup, and DLSS cleanup on toggle off.
+ow_settings_dir="$ow_data/pfx/drive_c/users/steamuser/Documents/Overwatch/Settings"
+mkdir -p "$ow_settings_dir"
+ow_ini="$ow_settings_dir/Settings_v0.ini"
+cat > "$ow_ini" <<'INI'
+[GPU.6]
+GPUName = "Apple M3 Pro"
+GPUVenderID = "4203"
+LastUsedGPUVendorID = "4203"
+
+[Render.13]
+HighQualityUpsample = "3"
+INI
+
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ow_data" \
+  NOTRECALL_GAME_MODE=0 \
+  DXMT_ENABLE_NVEXT=1 \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+[ -f "$ow_data/Settings_v0.before-gpu-sync.ini" ]
+grep -Fq 'GPUName = "NVIDIA GeForce RTX 4090"' "$ow_ini"
+grep -Fq 'GPUVenderID = "4318"' "$ow_ini"
+grep -Fq 'GPUDeviceID = "9860"' "$ow_ini"
+grep -Fq 'HighQualityUpsample = "3"' "$ow_ini"
+
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ow_data" \
+  NOTRECALL_GAME_MODE=0 \
+  DXMT_ENABLE_NVEXT=0 \
+  NOTRECALL_TEST_GPU_NAME="Apple M3 Pro" \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+grep -Fq 'GPUName = "Apple M3 Pro"' "$ow_ini"
+grep -Fq 'GPUVenderID = "4203"' "$ow_ini"
+! grep -Fq 'GPUDeviceID' "$ow_ini"
+! grep -Fq 'HighQualityUpsample' "$ow_ini"
+
+# Case 6: Overwatch Highlights symlink to ~/Movies/Overwatch with collision-safe clip migration.
+hl_data="$test_root/compatdata/hl-ow"
+mkdir -p "$hl_data/pfx/drive_c/users/steamuser/Documents/Overwatch/videos/overwatch" "$fake_home/Movies/Overwatch"
+printf 'existing' > "$fake_home/Movies/Overwatch/potg.mp4"
+printf 'migrated' > "$hl_data/pfx/drive_c/users/steamuser/Documents/Overwatch/videos/overwatch/potg.mp4"
+
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$hl_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+hl_link="$hl_data/pfx/drive_c/users/steamuser/Documents/Overwatch/videos/overwatch"
+[ -L "$hl_link" ]
+[ "$(readlink "$hl_link")" = "$fake_home/Movies/Overwatch" ]
+[ "$(cat "$fake_home/Movies/Overwatch/potg.mp4")" = "existing" ]
+[ "$(cat "$fake_home/Movies/Overwatch/potg 2.mp4")" = "migrated" ]
+echo "    OK: Phase 2 registry QoL, 1x/2x RetinaMode, BT mic routing, MetalFX Settings_v0.ini sync, and Highlights migration"
 
 echo "==> All checks passed!"
