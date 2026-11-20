@@ -47,6 +47,8 @@ final class AppState: ObservableObject {
     @Published var pluginInstalled = false
     @Published var helpersInstalled = false
     @Published var healthWarnings: [HealthWarning] = []
+    @Published var overwatchInstalled = false
+    @Published var overwatchCompatTool: String?
 
     @Published var steamLibraryCount = 0
     @Published var shaderCaches: [ShaderCacheEntry] = []
@@ -61,9 +63,12 @@ final class AppState: ObservableObject {
     var notProtonSupport: URL { home.appending(path: "Library/Application Support/notproton") }
     var notRecallSupport: URL { home.appending(path: "Library/Application Support/notrecall") }
     var steamCompatTool: URL { home.appending(path: "Library/Application Support/Steam/compatibilitytools.d/notrecall-proton") }
+    var steamConfigVDF: URL { home.appending(path: "Library/Application Support/Steam/config/config.vdf") }
+    var overwatchHighlightsDir: URL { home.appending(path: "Movies/Overwatch") }
     var pluginFile: URL { notProtonSupport.appending(path: "plugins/50-notrecall.conf") }
 
     var activeRuntimeSource: URL? { customRuntimeURL ?? recallRuntimeDetected }
+    var overwatchConfiguredForNotRecall: Bool { overwatchCompatTool == "notrecall-proton" }
 
     var hasMissingPrerequisites: Bool {
         !rosettaInstalled || steamAppURL == nil || !notProtonBridgeReady
@@ -88,22 +93,27 @@ final class AppState: ObservableObject {
         let libraries = Self.discoverSteamLibraries(home: home)
         steamLibraryCount = libraries.count
         let osOK = macOSSupported
+        let configVDF = steamConfigVDF
 
-        let scanResult = await Task.detached { () -> (Bool, [HealthWarning], [ShaderCacheEntry], String, String) in
+        let scanResult = await Task.detached { () -> (Bool, [HealthWarning], Bool, String?, [ShaderCacheEntry], String, String) in
             let rosetta = Self.probeRosetta()
             let warnings = Self.collectHealthWarnings(macOSSupported: osOK, libraries: libraries)
             let names = Self.loadSteamAppNames(across: libraries)
+            let owInstalled = names["2357570"] != nil
+            let owTool = SteamVDF.readCompatTool(forAppID: "2357570", in: configVDF)
             let caches = Self.scanShaderCaches(across: libraries, appNames: names)
             let (logTitle, logText) = Self.loadLatestLog(across: libraries, appNames: names)
-            return (rosetta, warnings, caches, logTitle, logText)
+            return (rosetta, warnings, owInstalled, owTool, caches, logTitle, logText)
         }.value
 
         rosettaInstalled = scanResult.0
         healthWarnings = scanResult.1
-        shaderCaches = scanResult.2
+        overwatchInstalled = scanResult.2
+        overwatchCompatTool = scanResult.3
+        shaderCaches = scanResult.4
         if !preserveLog {
-            recentLogTitle = scanResult.3
-            recentLogText = scanResult.4
+            recentLogTitle = scanResult.5
+            recentLogText = scanResult.6
         }
     }
 
@@ -208,6 +218,63 @@ final class AppState: ObservableObject {
         }
     }
 
+    func playOverwatch() {
+        guard let url = URL(string: "steam://rungameid/2357570") else { return }
+        if NSWorkspace.shared.open(url) {
+            statusMessage = "Launching Overwatch via Steam…"
+        } else {
+            statusMessage = "Could not open steam://rungameid/2357570."
+        }
+    }
+
+    func openOverwatchHighlights() {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: overwatchHighlightsDir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(overwatchHighlightsDir)
+        statusMessage = "Opened ~/Movies/Overwatch."
+    }
+
+    func configureOverwatchInSteam() async {
+        guard let steam = steamAppURL else {
+            statusMessage = "Steam.app not found in /Applications or ~/Applications."
+            return
+        }
+        guard FileManager.default.fileExists(atPath: steamConfigVDF.path) else {
+            statusMessage = "Steam config.vdf not found. Launch and sign into Steam once first."
+            return
+        }
+        isBusy = true
+        defer { isBusy = false }
+
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.valvesoftware.steam")
+        for app in running {
+            app.terminate()
+        }
+        if !running.isEmpty {
+            var exited = false
+            for _ in 0..<24 {
+                if NSRunningApplication.runningApplications(withBundleIdentifier: "com.valvesoftware.steam").isEmpty {
+                    exited = true
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            if !exited {
+                statusMessage = "Steam did not exit in time — quit Steam manually, then click Configure in Steam again."
+                return
+            }
+        }
+
+        do {
+            try SteamVDF.setCompatTool(forAppID: "2357570", toolName: "notrecall-proton", in: steamConfigVDF)
+            try await NSWorkspace.shared.openApplication(at: steam, configuration: NSWorkspace.OpenConfiguration())
+            statusMessage = "Configured Overwatch (AppID 2357570) to use NotRecall in Steam and relaunched Steam."
+        } catch {
+            statusMessage = "Failed to update Steam config.vdf: \(error.localizedDescription)"
+        }
+        await refresh()
+    }
+
     func runProjectScript(_ relativePath: String, extraArgs: [String] = [], switchToLogs: Bool = false) async {
         guard let scriptURL = locateProjectScript(relativePath) else {
             statusMessage = "Could not locate \(relativePath) next to NotRecallApp."
@@ -283,6 +350,7 @@ final class AppState: ObservableObject {
         NotProton Bridge:   \(notProtonBridgeReady ? "ready" : "missing")
         Runtime Source:     \(activeRuntimeSource?.path ?? "none")
         Staged Runtime:     \(stagedRuntimeReady ? (stagedRuntimeVersion ?? "ready") : "missing")
+        Overwatch (2357570): \(overwatchInstalled ? "installed" : "not found") (compat tool: \(overwatchCompatTool ?? "unset"))
         Steam Compat Tool:  \(steamToolInstalled ? "installed" : "missing")
         NotProton Plugin:   \(pluginInstalled ? "installed" : "missing")
         Shader Helpers:     \(helpersInstalled ? "installed" : "missing")

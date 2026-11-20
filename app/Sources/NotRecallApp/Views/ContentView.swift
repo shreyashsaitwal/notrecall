@@ -44,6 +44,8 @@ struct ContentView: View {
                     healthWarningsCallout
                 }
 
+                overwatchCard
+
                 GroupBox("Environment Checks") {
                     VStack(alignment: .leading, spacing: 8) {
                         statusRow("Rosetta 2", ok: state.rosettaInstalled, detail: state.rosettaInstalled ? "Installed" : "Required to run x86_64 Wine on Apple Silicon")
@@ -208,6 +210,58 @@ struct ContentView: View {
                         Spacer()
                     }
                 }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private var overwatchCard: some View {
+        GroupBox("Overwatch on Steam (AppID 2357570)") {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: state.overwatchConfiguredForNotRecall ? "checkmark.circle.fill" : (state.overwatchInstalled ? "gamecontroller.fill" : "magnifyingglass"))
+                    .foregroundStyle(state.overwatchConfiguredForNotRecall ? .green : (state.overwatchInstalled ? .blue : .secondary))
+                    .font(.title3)
+                VStack(alignment: .leading, spacing: 2) {
+                    if !state.overwatchInstalled {
+                        Text("Overwatch not detected in Steam libraries")
+                            .font(.subheadline.weight(.medium))
+                        Text("Install Overwatch in Steam, then click Configure in Steam to assign NotRecall automatically.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if state.overwatchConfiguredForNotRecall {
+                        Text("Ready to play with NotRecall")
+                            .font(.subheadline.weight(.medium))
+                        Text("Steam Compatibility Tool is set to notrecall-proton with Recall's Overwatch DXMT profile.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Overwatch installed — not yet using NotRecall")
+                            .font(.subheadline.weight(.medium))
+                        Text("Current tool: \(state.overwatchCompatTool ?? "default"). Click Configure in Steam to bind AppID 2357570 automatically.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if state.overwatchInstalled && !state.overwatchConfiguredForNotRecall {
+                    Button("Configure in Steam") {
+                        Task { await state.configureOverwatchInSteam() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(state.isBusy || !state.steamToolInstalled)
+                }
+                if state.overwatchInstalled {
+                    Button("Play Overwatch") {
+                        state.playOverwatch()
+                    }
+                    .controlSize(.small)
+                    .disabled(state.isBusy || state.steamAppURL == nil)
+                }
+                Button("Highlights") {
+                    state.openOverwatchHighlights()
+                }
+                .controlSize(.small)
             }
             .padding(.vertical, 2)
         }
