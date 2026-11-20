@@ -54,6 +54,7 @@ if [ ! -d "$bridge_src" ]; then
 fi
 
 export WINELOADER WINESERVER
+export WINEARCH="${WINEARCH:-win64}"
 export PATH="$nr_runtime/bin:$PATH"
 export WINEDLLPATH="$nr_runtime/lib/wine/x86_64-windows:$wine_unix${WINEDLLPATH:+:$WINEDLLPATH}"
 export DYLD_FALLBACK_LIBRARY_PATH="$nr_runtime/lib:$wine_unix${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
@@ -345,6 +346,18 @@ import_prefix_settings() {
       '[HKEY_CURRENT_USER\Software\Wine\AppDefaults\Overwatch.exe\Mac Driver]' \
       '"LeftOptionIsAlt"="Y"' ''
 
+    # Match Recall's direct network connection default (disables WPAD auto-proxy
+    # detection so WinHTTP/WinInet don't stall 60s on wildcard-DNS ISPs).
+    if [ "${NOTRECALL_PROXY_AUTO_DETECT:-0}" = "1" ]; then
+      printf '%s\r\n' \
+        '[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections]' \
+        '"DefaultConnectionSettings"=-' ''
+    else
+      printf '%s\r\n' \
+        '[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections]' \
+        '"DefaultConnectionSettings"=hex:46,00,00,00,01,00,00,00,01,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00' ''
+    fi
+
     emit_bt_voice_reg
 
     printf '%s\n' "$wanted" | while IFS= read -r cid; do
@@ -484,6 +497,164 @@ posix_to_winpath() {
 }
 
 
+# Seed Overwatch's Settings_v0.ini once with Recall's candidate baseline & display defaults
+# (1920x1200 on 16:10 MacBooks, 1920x1080 on 16:9 monitors; Low preset; 600 FPS cap; VSync off;
+# DynamicRenderScale off), then read the active FullScreenWidth/Height for dxmt.conf.
+# Subsequent launches keep any resolution or graphics changes the player made in Overwatch.
+ow_canvas_w=""
+ow_canvas_h=""
+seed_overwatch_preferences() {
+  is_overwatch_launch || return 0
+  [ -n "${WINEPREFIX:-}" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ] || return 0
+  [ -x /usr/bin/perl ] || return 0
+
+  def_info="${NOTRECALL_TEST_DISPLAY_DEFAULT:-}"
+  if [ -z "$def_info" ] && [ -x "$nr_helpers/notrecall-sysinfo" ]; then
+    def_info=$("$nr_helpers/notrecall-sysinfo" display-default 2>/dev/null || true)
+  fi
+  set -- $def_info
+  def_w="${1:-1920}"
+  def_h="${2:-1200}"
+  def_hz="${3:-120}"
+  case "$def_w" in ''|*[!0-9]*) def_w=1920 ;; esac
+  case "$def_h" in ''|*[!0-9]*) def_h=1200 ;; esac
+  case "$def_hz" in ''|*[!0-9]*) def_hz=120 ;; esac
+
+  settings_dir="$WINEPREFIX/drive_c/users/steamuser/Documents/Overwatch/Settings"
+  settings_ini="$settings_dir/Settings_v0.ini"
+  seed_marker="$STEAM_COMPAT_DATA_PATH/.notrecall-ow-baseline-seeded"
+  backup_ini="$STEAM_COMPAT_DATA_PATH/Settings_v0.before-baseline.ini"
+
+  if [ ! -f "$seed_marker" ] || [ ! -f "$settings_ini" ]; then
+    mkdir -p "$settings_dir" 2>/dev/null || return 0
+    if [ ! -L "$settings_ini" ]; then
+      /usr/bin/perl -e '
+        my ($path, $backup, $w, $h, $hz) = @ARGV;
+        my $orig = "";
+        my $existed = (-f $path);
+        if ($existed) {
+          my $size = -s $path;
+          exit 0 if !defined $size || $size > 1048576;
+          open my $in, "<:raw", $path or exit 0;
+          local $/;
+          $orig = <$in>;
+          close $in;
+          $orig = "" if !defined $orig;
+        }
+        my $nl = ($orig =~ /\r\n/) ? "\r\n" : "\n";
+        my @lines = length($orig) ? split(/\Q$nl\E/, $orig, -1) : ("[Render.13]", "");
+        my ($rs, $re) = (-1, scalar(@lines));
+        for my $i (0 .. $#lines) {
+          (my $t = $lines[$i]) =~ s/^\s+|\s+$//g;
+          if ($rs < 0 && $t eq "[Render.13]") { $rs = $i + 1; }
+          elsif ($rs >= 0 && $t =~ /^\[/) { $re = $i; last; }
+        }
+        if ($rs < 0) {
+          push @lines, "" if @lines && $lines[-1] ne "";
+          push @lines, "[Render.13]";
+          $rs = scalar(@lines);
+          $re = $rs;
+        }
+        my %launch = (
+          UseCustomWorldScale     => "1",
+          DynamicRenderScale      => "0",
+          FullscreenWindow        => "0",
+          FullscreenWindowEnabled => "0",
+          WindowedFullscreen      => "0",
+          WindowMode              => "0",
+          FullScreenWidth         => $w,
+          FullScreenHeight        => $h,
+          FullScreenRefresh       => $hz,
+          WindowedWidth           => $w,
+          WindowedHeight          => $h,
+          WindowedPosX            => "100",
+          WindowedPosY            => "100",
+        );
+        my %baseline = (
+          FrameRateCap        => "600",
+          UseCustomFrameRates => "1",
+          GFXPresetLevel      => "1",
+          PhysicsQuality      => "3",
+          VerticalSyncEnabled => "0",
+          ShowFPSCounter      => "1",
+          ShowRTT             => "1",
+          WindowedRefresh     => $hz,
+        );
+        my $find_key = sub {
+          my ($s, $e, $key) = @_;
+          for my $i ($s .. $e - 1) {
+            (my $t = $lines[$i]) =~ s/^\s+|\s+$//g;
+            return $i if $t =~ /^\Q$key\E\s*=/;
+          }
+          return -1;
+        };
+        my $last = $rs;
+        for my $i ($rs .. $re - 1) { $last = $i + 1 if $lines[$i] =~ /\S/; }
+        my $changed = !$existed;
+        # Seed launch display defaults (overwrite on initial seed) and missing baseline keys.
+        for my $k (sort keys %launch) {
+          my $idx = $find_key->($rs, $re, $k);
+          my $line = "$k = \"$launch{$k}\"";
+          if ($idx >= 0) {
+            if ($lines[$idx] ne $line) { $lines[$idx] = $line; $changed = 1; }
+          } else {
+            splice(@lines, $last, 0, $line);
+            $last++; $re++; $changed = 1;
+          }
+        }
+        for my $k (sort keys %baseline) {
+          my $idx = $find_key->($rs, $re, $k);
+          if ($idx < 0) {
+            splice(@lines, $last, 0, "$k = \"$baseline{$k}\"");
+            $last++; $re++; $changed = 1;
+          }
+        }
+        exit 0 if !$changed;
+        if ($existed && !-f $backup) {
+          if (open my $bf, ">:raw", "$backup.tmp.$$") {
+            print $bf $orig;
+            close $bf;
+            rename "$backup.tmp.$$", $backup;
+          }
+        }
+        my $updated = join($nl, @lines);
+        $updated .= $nl if $updated !~ /\Q$nl\E\z/;
+        my $tmp = "$path.nr-tmp.$$";
+        open my $out, ">:raw", $tmp or exit 0;
+        print $out $updated;
+        close $out or do { unlink $tmp; exit 0; };
+        rename $tmp, $path or unlink $tmp;
+      ' "$settings_ini" "$backup_ini" "$def_w" "$def_h" "$def_hz" >> "$log" 2>&1 || true
+      [ -f "$settings_ini" ] && : > "$seed_marker" 2>/dev/null || true
+    fi
+  fi
+
+  # Read active FullScreenWidth/Height from Settings_v0.ini so dxmt.conf matches.
+  if [ -f "$settings_ini" ] && [ ! -L "$settings_ini" ]; then
+    dims=$(/usr/bin/perl -e '
+      my ($path) = @ARGV;
+      open my $in, "<:raw", $path or exit 0;
+      my ($in_r, $w, $h) = (0, "", "");
+      while (my $line = <$in>) {
+        $line =~ s/^\s+|\s+$//g;
+        if ($line =~ /^\[/) { $in_r = ($line eq "[Render.13]"); next; }
+        next unless $in_r;
+        if ($line =~ /^FullScreenWidth\s*=\s*"?([0-9]{3,5})"?$/) { $w = $1; }
+        elsif ($line =~ /^FullScreenHeight\s*=\s*"?([0-9]{3,5})"?$/) { $h = $1; }
+      }
+      close $in;
+      print "$w $h\n" if $w && $h && $w >= 640 && $h >= 480 && $w <= 16384 && $h <= 16384;
+    ' "$settings_ini" 2>/dev/null || true)
+    set -- $dims
+    ow_canvas_w="${1:-$def_w}"
+    ow_canvas_h="${2:-$def_h}"
+  else
+    ow_canvas_w="$def_w"
+    ow_canvas_h="$def_h"
+  fi
+}
+[ "$verb" = "waitforexitandrun" ] && seed_overwatch_preferences
+
 if [ "$verb" = "waitforexitandrun" ] && [ -z "${DXMT_CONFIG_FILE:-}" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   if is_overwatch_launch; then
     managed_dxmt_conf="$STEAM_COMPAT_DATA_PATH/notrecall-dxmt.conf"
@@ -497,6 +668,8 @@ if [ "$verb" = "waitforexitandrun" ] && [ -z "${DXMT_CONFIG_FILE:-}" ] && [ -n "
         'd3d11.preferredMaxFrameRate = 0' \
         'd3d11.shaderCompilerThreads = 8' \
         'd3d11.shaderCompilerNormalPriority = True' \
+        "dxgi.fullscreenCanvasWidth = ${ow_canvas_w:-1920}" \
+        "dxgi.fullscreenCanvasHeight = ${ow_canvas_h:-1200}" \
         'dxgi.nativeFullscreen = True' \
         'dxgi.maxFrameLatency = 1' \
         'dxgi.sharpPresentation = True'
@@ -530,8 +703,13 @@ fi
 if [ -n "${NOTRECALL_FPS_LIMIT:-}" ] && [ "$NOTRECALL_FPS_LIMIT" != "0" ]; then
   append_dxmt_cfg "d3d11.preferredMaxFrameRate=$NOTRECALL_FPS_LIMIT"
 fi
-if [ "${DXMT_ENABLE_NVEXT:-0}" = "1" ] && [ -n "${NOTRECALL_METALFX_SHARPNESS:-}" ] && [ "$NOTRECALL_METALFX_SHARPNESS" != "0" ]; then
-  append_dxmt_cfg "d3d11.metalfxSharpness=$NOTRECALL_METALFX_SHARPNESS"
+if [ "${DXMT_ENABLE_NVEXT:-0}" = "1" ] && [ -n "${NOTRECALL_METALFX_SHARPNESS:-}" ]; then
+  case "$NOTRECALL_METALFX_SHARPNESS" in
+    off|0|0.0|0.00) ;;
+    low)  append_dxmt_cfg "d3d11.metalfxSharpness=0.4" ;;
+    high) append_dxmt_cfg "d3d11.metalfxSharpness=0.8" ;;
+    *)    append_dxmt_cfg "d3d11.metalfxSharpness=$NOTRECALL_METALFX_SHARPNESS" ;;
+  esac
 fi
 [ -n "$dxmt_cfg" ] && export DXMT_CONFIG="$dxmt_cfg"
 
@@ -764,17 +942,23 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
     rm -f -- "$cache_root/cache/pack.json" "$cache_root/cache/optimized.json" 2>/dev/null || true
     rm -f -- "$cache_root/cache/rebuild-shaders" 2>/dev/null || true
   fi
-  # Recall's pipeline_cache.c reads {"schema":1,"limit":<MiB>} from load.json.
-  if [ -n "${NOTRECALL_SHADER_MEM_MB:-}" ] && [ "$NOTRECALL_SHADER_MEM_MB" != "0" ]; then
-    case "$NOTRECALL_SHADER_MEM_MB" in
-      *[!0-9]*) ;;
-      *)
-        printf '{"schema":1,"limit":%s}\n' "$NOTRECALL_SHADER_MEM_MB" > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
-        ;;
-    esac
-  else
-    rm -f "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
-  fi
+  # Recall's pipeline_cache.c reads {"schema":1,"limit":"all"|"first"|<MiB>} from load.json.
+  # Write {"schema":1,"limit":"all"} by default to match Recall's applyShaderMemory().
+  shader_mem="${NOTRECALL_SHADER_MEM_MB:-all}"
+  case "$shader_mem" in
+    ""|0|all)
+      printf '{"schema":1,"limit":"all"}\n' > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
+      ;;
+    first)
+      printf '{"schema":1,"limit":"first"}\n' > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
+      ;;
+    *[!0-9]*)
+      printf '{"schema":1,"limit":"all"}\n' > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
+      ;;
+    *)
+      printf '{"schema":1,"limit":%s}\n' "$shader_mem" > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
+      ;;
+  esac
 fi
 
 shim_exe="C:\\Program Files (x86)\\Steam\\steam.exe"
@@ -807,7 +991,15 @@ resolve_game_name() {
 
 launch_wine="$WINELOADER"
 game_app=""
-if [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+# Recall's ntdll.so implements WINE_GAME_MODE (game_mode_exec) BEFORE CrossOver's
+# CW HACK 22144 symlink hack: when WINE_GAME_MODE=Overwatch.exe is set and
+# runtime/lib/wine/game-mode/Overwatch.app exists, Wine automatically execs the
+# signed Overwatch.app bundle for Overwatch.exe so macOS turns Game Mode on.
+recall_ow_app="$nr_runtime/lib/wine/game-mode/Overwatch.app"
+if [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && is_overwatch_launch && [ -x "$recall_ow_app/Contents/MacOS/wine" ]; then
+  export WINE_GAME_MODE="Overwatch.exe"
+  game_app="$recall_ow_app"
+elif [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   resolve_game_name
   launcher_dir="$nr_support/launchers/$app_id"
   game_app="$launcher_dir/NotRecallGame.app"

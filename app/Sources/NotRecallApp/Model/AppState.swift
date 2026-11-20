@@ -156,25 +156,25 @@ final class AppState: ObservableObject {
             return
         }
         if NSWorkspace.shared.open(url) {
-            statusMessage = "Opened Input Monitoring settings. Add Steam.app if using 8,000 Hz Raw HID mouse mode."
+            statusMessage = "Opened Input Monitoring in System Settings. Add Steam to turn on High-precision mouse."
         } else {
-            statusMessage = "Could not open System Settings → Privacy & Security → Input Monitoring."
+            statusMessage = "Could not open System Settings › Privacy & Security › Input Monitoring."
         }
     }
 
     func revealSteamInFinder() {
         if let steam = steamAppURL {
             NSWorkspace.shared.activateFileViewerSelecting([steam])
-            statusMessage = "Revealed Steam.app in Finder — drag it into Input Monitoring for 8,000 Hz mouse polling."
+            statusMessage = "Showed Steam in Finder — drag it into Input Monitoring for High-precision mouse."
         } else {
-            statusMessage = "Steam.app was not found in /Applications or ~/Applications."
+            statusMessage = "Steam wasn’t found in Applications."
         }
     }
 
     func openNotProton() {
         if let app = notProtonAppURL {
             NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
-            statusMessage = "Opened NotProton.app — click Install there to stage the Steamworks bridge."
+            statusMessage = "Opened NotProton — click Install there so Steam can launch Windows games."
         } else {
             statusMessage = "NotProton.app not found in /Applications or ~/Applications. Install NotProton first."
         }
@@ -440,11 +440,10 @@ final class AppState: ObservableObject {
         let fm = FileManager.default
         do {
             try fm.removeItem(at: entry.path)
-            if let metalCache = Self.gameAppMetalCacheURL(forAppID: entry.appID),
-               fm.fileExists(atPath: metalCache.path) {
+            for metalCache in Self.gameAppMetalCacheURLs(forAppID: entry.appID) where fm.fileExists(atPath: metalCache.path) {
                 try? fm.removeItem(at: metalCache)
             }
-            statusMessage = "Cleared DXMT and Metal shader caches for \(entry.displayTitle)."
+            statusMessage = "Cleared shader cache for \(entry.displayTitle)."
         } catch {
             statusMessage = "Failed to clear cache: \(error.localizedDescription)"
         }
@@ -470,7 +469,14 @@ final class AppState: ObservableObject {
             statusMessage = "pipeline_hook.sh not installed — click Install / Update first."
             return
         }
-        let gameApp = notRecallSupport.appending(path: "launchers/\(entry.appID)/NotRecallGame.app")
+        let recallOWApp = notRecallSupport.appending(path: "runtime/lib/wine/game-mode/Overwatch.app")
+        let wrapperApp = notRecallSupport.appending(path: "launchers/\(entry.appID)/NotRecallGame.app")
+        let gameApp: URL
+        if entry.appID == "2357570", FileManager.default.fileExists(atPath: recallOWApp.appending(path: "Contents/MacOS/wine").path) {
+            gameApp = recallOWApp
+        } else {
+            gameApp = wrapperApp
+        }
         let logFile = entry.path.deletingLastPathComponent().appending(path: "notrecall-run.log")
         let args: [String] = [
             hook.path, "post", entry.path.path,
@@ -597,8 +603,8 @@ final class AppState: ObservableObject {
         if !macOSSupported {
             warnings.append(HealthWarning(
                 id: "macos_version",
-                title: "macOS 26.5 or newer recommended",
-                detail: "Overwatch requires Rosetta fixes from macOS 26.5+; older releases may hang before opening.",
+                title: "macOS 26.5 or newer needed",
+                detail: "Overwatch needs Rosetta fixes from macOS 26.5 or newer; on older versions it may hang before opening.",
                 isCritical: true
             ))
         }
@@ -606,16 +612,16 @@ final class AppState: ObservableObject {
         if info.isLowPowerModeEnabled {
             warnings.append(HealthWarning(
                 id: "low_power_mode",
-                title: "Low Power Mode is enabled",
-                detail: "Disable Low Power Mode in System Settings → Battery for full CPU/GPU clocks in Overwatch.",
+                title: "Low Power Mode is on",
+                detail: "Turn off Low Power Mode in System Settings › Battery so your Mac runs at full speed in matches.",
                 isCritical: false
             ))
         }
         if info.thermalState == .serious || info.thermalState == .critical {
             warnings.append(HealthWarning(
                 id: "thermal_throttling",
-                title: "Mac is thermally throttling",
-                detail: "macOS is reducing clocks to cool down. Close heavy background apps or improve airflow before queuing.",
+                title: "Your Mac is running hot",
+                detail: "macOS is slowing down to cool off. Close heavy apps or give your Mac more airflow before playing.",
                 isCritical: info.thermalState == .critical
             ))
         }
@@ -623,8 +629,8 @@ final class AppState: ObservableObject {
         if pressure >= 2 {
             warnings.append(HealthWarning(
                 id: "memory_pressure",
-                title: pressure >= 4 ? "Critical memory pressure" : "High memory pressure",
-                detail: "Close memory-heavy apps (or restart if up for days) to avoid input lag and stutters in Overwatch.",
+                title: pressure >= 4 ? "Your Mac is very low on memory" : "Your Mac is low on memory",
+                detail: "Close apps you aren’t using to prevent stutters and input lag during matches.",
                 isCritical: pressure >= 4
             ))
         }
@@ -653,8 +659,8 @@ final class AppState: ObservableObject {
             if recentHang != nil {
                 warnings.append(HealthWarning(
                     id: "recent_gpu_hang",
-                    title: "Recent Overwatch GPU hang detected",
-                    detail: "macOS terminated Overwatch's GPU context in a recent session. Consider rebuilding shaders or lowering Shader Pack Memory Budget.",
+                    title: "Overwatch’s graphics stopped responding recently",
+                    detail: "Try Rebuild Shaders in the Shaders tab, or lower Shader memory in Steam’s Compatibility settings.",
                     isCritical: false
                 ))
                 break
@@ -805,12 +811,16 @@ final class AppState: ObservableObject {
         return names
     }
 
-    nonisolated private static func gameAppMetalCacheURL(forAppID appID: String) -> URL? {
-        guard !appID.isEmpty, appID.allSatisfy(\.isNumber) else { return nil }
+    nonisolated private static func gameAppMetalCacheURLs(forAppID appID: String) -> [URL] {
+        guard !appID.isEmpty, appID.allSatisfy(\.isNumber) else { return [] }
         var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
-        guard confstr(_CS_DARWIN_USER_CACHE_DIR, &buf, buf.count) > 0 else { return nil }
+        guard confstr(_CS_DARWIN_USER_CACHE_DIR, &buf, buf.count) > 0 else { return [] }
         let root = URL(filePath: String(cString: buf))
-        return root.appending(path: "com.notrecall.game.\(appID)/com.apple.metal")
+        var urls = [root.appending(path: "com.notrecall.game.\(appID)/com.apple.metal")]
+        if appID == "2357570" {
+            urls.append(root.appending(path: "org.overwatch2mac.overwatch/com.apple.metal"))
+        }
+        return urls
     }
 
     nonisolated private static func isPrecompileRunning(at cacheRoot: URL) -> Bool {

@@ -1,10 +1,12 @@
 /* Lightweight native macOS system probe for notrecall compat/run.
  * Subcommands:
- *   display-scale  Prints "2" for Retina main display, "1" for 1x external monitor.
- *   gpu-name       Prints the default Metal GPU name (e.g. "Apple M3 Pro").
- *   bt-voice-uid   Prints the built-in microphone CoreAudio UID when the default
- *                  input is a Bluetooth headset and the MacBook lid is open;
- *                  prints nothing otherwise.
+ *   display-scale    Prints "2" for Retina main display, "1" for 1x external monitor.
+ *   display-default  Prints Recall's default Overwatch resolution and refresh rate
+ *                    ("<width> <height> <refresh>", e.g. "1920 1200 120" or "1920 1080 144").
+ *   gpu-name         Prints the default Metal GPU name (e.g. "Apple M3 Pro").
+ *   bt-voice-uid     Prints the built-in microphone CoreAudio UID when the default
+ *                    input is a Bluetooth headset and the MacBook lid is open;
+ *                    prints nothing otherwise.
  */
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -78,7 +80,7 @@ static NSString *builtInMicUIDForBluetoothHeadset(void) {
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         if (argc < 2) {
-            fprintf(stderr, "usage: notrecall-sysinfo <display-scale|gpu-name|bt-voice-uid>\n");
+            fprintf(stderr, "usage: notrecall-sysinfo <display-scale|display-default|gpu-name|bt-voice-uid>\n");
             return 2;
         }
         NSString *cmd = @(argv[1]);
@@ -90,6 +92,24 @@ int main(int argc, const char *argv[]) {
                 CGDisplayModeRelease(mode);
             }
             printf("%d\n", scale);
+            return 0;
+        }
+        if ([cmd isEqualToString:@"display-default"]) {
+            int width = 1920, height = 1200, refresh = 120;
+            CGDisplayModeRef mode = CGDisplayCopyDisplayMode(CGMainDisplayID());
+            if (mode) {
+                size_t mw = CGDisplayModeGetWidth(mode);
+                size_t mh = CGDisplayModeGetHeight(mode);
+                if (mh > 0 && ((double)mw / (double)mh) >= 1.69) {
+                    height = 1080;
+                }
+                long r = lround(CGDisplayModeGetRefreshRate(mode));
+                if (r >= 24 && r <= 999) {
+                    refresh = (int)r;
+                }
+                CGDisplayModeRelease(mode);
+            }
+            printf("%d %d %d\n", width, height, refresh);
             return 0;
         }
         if ([cmd isEqualToString:@"gpu-name"]) {

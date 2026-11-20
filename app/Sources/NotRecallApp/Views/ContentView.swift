@@ -9,7 +9,7 @@ struct ContentView: View {
                 .tabItem { Label("Status", systemImage: "checkmark.shield") }
                 .tag(0)
             shaderCachesTab
-                .tabItem { Label("Shader Caches", systemImage: "cpu") }
+                .tabItem { Label("Shaders", systemImage: "cpu") }
                 .tag(1)
             logsTab
                 .tabItem { Label("Logs", systemImage: "doc.text") }
@@ -56,7 +56,7 @@ struct ContentView: View {
                     .controlSize(.small)
                 }
 
-                Text("Runs Recall's patched Wine + DXMT runtime as a Steam Play compatibility tool on top of stock NotProton.")
+                Text("Play Overwatch and other DirectX 11 Windows games on Steam using Recall’s Mac runtime.")
                     .foregroundStyle(.secondary)
 
                 if let update = state.availableRecallUpdate {
@@ -73,20 +73,20 @@ struct ContentView: View {
 
                 overwatchCard
 
-                GroupBox("Environment Checks") {
+                GroupBox("Setup Status") {
                     VStack(alignment: .leading, spacing: 8) {
-                        statusRow("Rosetta 2", ok: state.rosettaInstalled, detail: state.rosettaInstalled ? "Installed" : "Required to run x86_64 Wine on Apple Silicon")
-                        statusRow("Steam", ok: state.steamAppURL != nil, detail: state.steamAppURL?.path ?? "Not found in /Applications")
-                        statusRow("NotProton Steamworks Bridge", ok: state.notProtonBridgeReady, detail: state.notProtonSupport.appending(path: "bridge").path)
+                        statusRow("Rosetta 2", ok: state.rosettaInstalled, detail: state.rosettaInstalled ? "Ready" : "Needed to run Windows games on Apple Silicon")
+                        statusRow("Steam", ok: state.steamAppURL != nil, detail: state.steamAppURL?.path ?? "Install Steam in Applications first")
+                        statusRow("NotProton", ok: state.notProtonBridgeReady, detail: state.notProtonBridgeReady ? "Ready" : "Open NotProton and click Install so Steam can launch Windows games")
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: state.activeRuntimeSource != nil ? "checkmark.circle.fill" : "arrow.down.circle.fill")
                                 .foregroundStyle(state.activeRuntimeSource != nil ? .green : .blue)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(state.customRuntimeURL != nil ? "Custom Recall Source" : (state.activeRuntimeSource != nil ? "Local Recall Source" : "Recall Release Download"))
+                                Text(state.customRuntimeURL != nil ? "Custom Recall File" : (state.activeRuntimeSource != nil ? "Local Recall Copy" : "Recall Download"))
                                     .font(.body)
                                 Text(
                                     state.activeRuntimeSource?.path
-                                        ?? "Will download \(state.preferredDownloadRelease.title) from GitHub\(state.preferredDownloadRelease.formattedSize.map { " (\($0))" } ?? "")"
+                                        ?? "Downloads \(state.preferredDownloadRelease.title) from GitHub\(state.preferredDownloadRelease.formattedSize.map { " (\($0))" } ?? "")"
                                 )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -94,7 +94,7 @@ struct ContentView: View {
                                     .truncationMode(.middle)
                             }
                             Spacer()
-                            Button("Select…") { state.selectLocalRuntime() }
+                            Button("Choose…") { state.selectLocalRuntime() }
                                 .controlSize(.small)
                             if state.customRuntimeURL != nil {
                                 Button("Reset") { state.clearCustomRuntime() }
@@ -102,24 +102,24 @@ struct ContentView: View {
                             }
                         }
                         statusRow(
-                            "Staged NotRecall Runtime",
+                            "Recall Runtime",
                             ok: state.stagedRuntimeReady,
                             detail: stagedRuntimeDetail
                         )
-                        statusRow("Steam Compatibility Tool (notrecall-proton)", ok: state.steamToolInstalled, detail: state.steamCompatTool.path)
-                        statusRow("NotProton UI Plugin (50-notrecall.conf)", ok: state.pluginInstalled, detail: state.pluginFile.path)
-                        statusRow("Offline Shader Precompiler (portable-pipeline)", ok: state.helpersInstalled, detail: state.notRecallSupport.appending(path: "helpers/portable-pipeline").path)
+                        statusRow("Steam Compatibility Tool", ok: state.steamToolInstalled, detail: state.steamToolInstalled ? "Ready in Steam" : "Not installed yet")
+                        statusRow("Steam Settings Panel", ok: state.pluginInstalled, detail: state.pluginInstalled ? "Installed — adds NotRecall options to Steam’s Compatibility tab" : "Not installed yet")
+                        statusRow("Background Shader Optimizer", ok: state.helpersInstalled, detail: state.helpersInstalled ? "Ready — prepares shaders between matches to prevent stutters" : "Not installed yet")
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: "info.circle.fill")
                                 .foregroundStyle(.secondary)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Input Monitoring Permission (Raw HID Mouse)").font(.body)
-                                Text("Optional — only needed for 8,000 Hz Raw HID mouse mode. Grant Input Monitoring to Steam.app in System Settings.")
+                                Text("High-precision mouse (optional)").font(.body)
+                                Text("Skips macOS’s mouse layer for the most precise aim. Add Steam in System Settings › Input Monitoring — until then, your mouse works normally.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button("Reveal Steam") { state.revealSteamInFinder() }
+                            Button("Show Steam") { state.revealSteamInFinder() }
                                 .controlSize(.small)
                             Button("Open Settings") { state.openInputMonitoringSettings() }
                                 .controlSize(.small)
@@ -231,8 +231,8 @@ struct ContentView: View {
                     Text("Recall \(update.version) is available")
                         .font(.headline)
                     Text(
-                        state.installedRecallVersion.map { "You have Recall \($0) staged. Review what's new or update your runtime." }
-                            ?? "A newer Recall release is available on GitHub."
+                        state.installedRecallVersion.map { "You have Recall \($0). Your games, saves, and settings stay as they are." }
+                            ?? "A newer Recall release is ready on GitHub."
                     )
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -260,20 +260,20 @@ struct ContentView: View {
                     .foregroundStyle(.orange)
                     .font(.title3)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Prerequisites Needed")
+                    Text("Before You Install")
                         .font(.headline)
                     if !state.rosettaInstalled {
-                        Text("Rosetta 2 is required to run Windows x86_64 games through Wine.")
+                        Text("Install Rosetta 2 so your Mac can run Windows games.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     if !state.notProtonBridgeReady {
-                        Text("Open NotProton and click Install first so its Steamworks bridge is staged.")
+                        Text("Open NotProton and click Install first so Steam can launch Windows games.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     if state.steamAppURL == nil {
-                        Text("Install Steam for macOS into /Applications before running NotRecall.")
+                        Text("Install Steam in Applications before setting up NotRecall.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -293,7 +293,7 @@ struct ContentView: View {
     }
 
     private var healthWarningsCallout: some View {
-        GroupBox("Pre-Match System Health") {
+        GroupBox("Before You Play") {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(state.healthWarnings) { warning in
                     HStack(alignment: .top, spacing: 8) {
@@ -312,35 +312,35 @@ struct ContentView: View {
     }
 
     private var overwatchCard: some View {
-        GroupBox("Overwatch on Steam (AppID 2357570)") {
+        GroupBox("Overwatch on Steam") {
             HStack(alignment: .center, spacing: 10) {
                 Image(systemName: state.overwatchConfiguredForNotRecall ? "checkmark.circle.fill" : (state.overwatchInstalled ? "gamecontroller.fill" : "magnifyingglass"))
                     .foregroundStyle(state.overwatchConfiguredForNotRecall ? .green : (state.overwatchInstalled ? .blue : .secondary))
                     .font(.title3)
                 VStack(alignment: .leading, spacing: 2) {
                     if !state.overwatchInstalled {
-                        Text("Overwatch not detected in Steam libraries")
+                        Text("Overwatch isn’t installed in Steam yet")
                             .font(.subheadline.weight(.medium))
-                        Text("Install Overwatch in Steam, then click Configure in Steam to assign NotRecall automatically.")
+                        Text("Install Overwatch in Steam, then come back here to set it up with one click.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else if state.overwatchConfiguredForNotRecall {
-                        Text("Ready to play with NotRecall")
+                        Text("Ready to play")
                             .font(.subheadline.weight(.medium))
-                        Text("Steam Compatibility Tool is set to notrecall-proton with Recall's Overwatch DXMT profile.")
+                        Text("Set up in Steam with Recall’s recommended Overwatch settings.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("Overwatch installed — not yet using NotRecall")
+                        Text("Overwatch is installed — ready to set up")
                             .font(.subheadline.weight(.medium))
-                        Text("Current tool: \(state.overwatchCompatTool ?? "default"). Click Configure in Steam to bind AppID 2357570 automatically.")
+                        Text("Click Set Up in Steam to configure Overwatch automatically.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
                 if state.overwatchInstalled && !state.overwatchConfiguredForNotRecall {
-                    Button("Configure in Steam") {
+                    Button("Set Up in Steam") {
                         Task { await state.configureOverwatchInSteam() }
                     }
                     .buttonStyle(.borderedProminent)
@@ -348,7 +348,7 @@ struct ContentView: View {
                     .disabled(state.isBusy || !state.steamToolInstalled)
                 }
                 if state.overwatchInstalled {
-                    Button("Play Overwatch") {
+                    Button("Play") {
                         state.playOverwatch()
                     }
                     .controlSize(.small)
@@ -368,9 +368,9 @@ struct ContentView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Per-Game DXMT Shader Caches")
+                    Text("Game Shaders")
                         .font(.title3.weight(.semibold))
-                    Text("Scanned \(state.steamLibraryCount) Steam \(state.steamLibraryCount == 1 ? "library" : "libraries")")
+                    Text("Your Mac learns shaders as you play and optimizes them in the background so future matches stay smooth.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -379,9 +379,9 @@ struct ContentView: View {
             }
             if state.shaderCaches.isEmpty {
                 ContentUnavailableView(
-                    "No Shader Caches Yet",
+                    "No Shaders Saved Yet",
                     systemImage: "cpu",
-                    description: Text("Launch a DX11 Steam game using NotRecall to build its per-AppID shader pack.")
+                    description: Text("Play a game with NotRecall and your Mac will build its shader cache automatically.")
                 )
             } else {
                 List(state.shaderCaches) { entry in
@@ -391,7 +391,7 @@ struct ContentView: View {
                                 HStack(spacing: 6) {
                                     Text(entry.displayTitle).font(.headline)
                                     if entry.isCompiling {
-                                        Text("Compiling")
+                                        Text("Optimizing")
                                             .font(.caption2.weight(.medium))
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 2)
@@ -399,7 +399,7 @@ struct ContentView: View {
                                             .clipShape(Capsule())
                                     }
                                     if entry.needsMacOSOptimization && !entry.isCompiling {
-                                        Text("macOS Updated")
+                                        Text("Optimize for this macOS")
                                             .font(.caption2.weight(.medium))
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 2)
@@ -407,7 +407,7 @@ struct ContentView: View {
                                             .clipShape(Capsule())
                                     }
                                     if entry.rebuildPending {
-                                        Text("Rebuild Queued")
+                                        Text("Rebuilding Next Launch")
                                             .font(.caption2.weight(.medium))
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 2)
@@ -415,7 +415,7 @@ struct ContentView: View {
                                             .clipShape(Capsule())
                                     }
                                 }
-                                Text("AppID \(entry.appID) • \(entry.archiveCount) .metallib archive(s) • \(entry.formattedSize)")
+                                Text("\(entry.formattedSize) • \(entry.archiveCount) shader \(entry.archiveCount == 1 ? "pack" : "packs")")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -427,24 +427,26 @@ struct ContentView: View {
                             Button("Rebuild Shaders") {
                                 Task { await state.requestRebuildShaders(entry) }
                             }
+                            .help("Builds your shaders again without forgetting any. Try it if FPS drops or graphics look wrong.")
                             .disabled(entry.rebuildPending || entry.isCompiling)
                             Button("Clear Cache", role: .destructive) {
                                 Task { await state.clearShaderCache(entry) }
                             }
+                            .help("Deletes saved shaders if a game crashes or shows graphics glitches.")
                             .disabled(entry.isCompiling)
                         }
                         if entry.isCompiling {
                             if let ready = entry.preparingReady, let learned = entry.preparingLearned, learned > 0 {
                                 VStack(alignment: .leading, spacing: 2) {
                                     ProgressView(value: Double(min(ready, learned)), total: Double(learned))
-                                    Text("Compiled \(ready) of \(learned) learned shaders in background…")
+                                    Text("Optimizing \(ready) of \(learned) shaders in the background…")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
                             } else {
                                 HStack(spacing: 6) {
                                     ProgressView().controlSize(.small)
-                                    Text("Optimizing shader cache in background…")
+                                    Text("Optimizing shaders in the background…")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
@@ -469,7 +471,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Latest Launch Log")
+                    Text("Session Log")
                         .font(.title3.weight(.semibold))
                     if !state.recentLogTitle.isEmpty {
                         Text(state.recentLogTitle)
@@ -574,7 +576,7 @@ struct WhatsNewSheet: View {
             Divider()
 
             HStack {
-                Text("NotRecall will download \(release.dmgName), verify its SHA-256 and code signature, and extract the updated runtime.")
+                Text("NotRecall will download \(release.dmgName), verify it, and update your runtime. Your games, saves, and settings stay as they are.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()

@@ -115,6 +115,7 @@ assert_env "$ow_env" "DXMT_GPU_LOST_EXIT=Overwatch.exe"
 assert_env "$ow_env" "WINEMAC_INPUT_VARIANT=precise"
 assert_env "$ow_env" "WINEMAC_RAW_SOURCE=hid"
 assert_env "$ow_env" "WINEMAC_MOUSELOOK_RAW_INTERVAL_US=0"
+assert_env "$ow_env" "WINEARCH=win64"
 assert_env "$ow_env" "WINEMSYNC=1"
 assert_env "$ow_env" "WINEESYNC=0"
 assert_env "$ow_env" "WINE_SIMULATE_WRITECOPY=1"
@@ -136,6 +137,7 @@ grep -Fq "dxgi.sharpPresentation = True" "$ow_data/notrecall-dxmt.conf"
 grep -Fq "dxgi.displaySyncEnabled = True" "$ow_data/notrecall-dxmt.conf"
 grep -Fq "dxgi.maxFrameLatency = 2" "$ow_data/notrecall-dxmt.conf"
 grep -Fq "DXMT_CONFIG_FILE=Z:" "$ow_env"
+grep -Fqx '{"schema":1,"limit":"all"}' "$ow_data/notrecall-cache/cache/pipelines/load.json"
 
 # Case 2: Classic mouse mode unsets WINEMAC_RAW_SOURCE and WINEMAC_MOUSELOOK_RAW_INTERVAL_US.
 classic_env="$test_root/classic.env"
@@ -182,6 +184,7 @@ HOME="$fake_home" \
 grep -Fq '"RetinaMode"="N"' "$reg1_out"
 grep -Fq '"LeftOptionIsAlt"="Y"' "$reg1_out"
 grep -Fq '"Browsers"="/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/open"' "$reg1_out"
+grep -Fq '"DefaultConnectionSettings"=hex:46,00,00,00,01,00,00,00,01,00,00,00' "$reg1_out"
 grep -Fq 'winecoreaudio.drv\devices\1,BuiltInMicrophoneDevice' "$reg1_out"
 grep -Fq '"DefaultInput"="{0.0.1.00000000}.{' "$reg1_out"
 grep -Fq '"DefaultVoiceInput"="{0.0.1.00000000}.{' "$reg1_out"
@@ -193,6 +196,10 @@ HOME="$fake_home" \
   NOTRECALL_GAME_MODE=0 \
   NOTRECALL_TEST_DISPLAY_SCALE=2 \
   NOTRECALL_TEST_BT_MIC_UID="none" \
+  NOTRECALL_PROXY_AUTO_DETECT=1 \
+  NOTRECALL_SHADER_MEM_MB=first \
+  DXMT_ENABLE_NVEXT=1 \
+  NOTRECALL_METALFX_SHARPNESS=low \
   TEST_REG_OUT="$reg2_out" \
   TEST_ENV_OUT="$ow_env" \
   sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
@@ -200,6 +207,9 @@ HOME="$fake_home" \
 grep -Fq '"RetinaMode"="Y"' "$reg2_out"
 grep -Fq '"DefaultInput"=-' "$reg2_out"
 grep -Fq '"DefaultVoiceInput"=-' "$reg2_out"
+grep -Fq '"DefaultConnectionSettings"=-' "$reg2_out"
+grep -Fqx '{"schema":1,"limit":"first"}' "$ow_data/notrecall-cache/cache/pipelines/load.json"
+grep -Fq "d3d11.metalfxSharpness=0.4" "$ow_env"
 
 # Case 5: MetalFX Settings_v0.ini [GPU.6] sync, backup, and DLSS cleanup on toggle off.
 ow_settings_dir="$ow_data/pfx/drive_c/users/steamuser/Documents/Overwatch/Settings"
@@ -274,6 +284,52 @@ hl_link="$hl_data/pfx/drive_c/users/steamuser/Documents/Overwatch/videos/overwat
 [ "$(cat "$fake_home/Movies/Overwatch/potg.mp4")" = "existing" ]
 [ "$(cat "$fake_home/Movies/Overwatch/potg 2.mp4")" = "migrated" ]
 echo "    OK: Phase 2 registry QoL, 1x/2x RetinaMode, BT mic routing, MetalFX Settings_v0.ini sync, and Highlights migration"
+
+# Case 7: Recall native WINE_GAME_MODE (Overwatch.app) + Overwatch Settings_v0.ini baseline & canvas sync.
+gm_data="$test_root/compatdata/gm-ow"
+mkdir -p "$gm_data" "$fake_runtime/lib/wine/game-mode/Overwatch.app/Contents/MacOS"
+printf '#!/bin/sh\nexit 0\n' > "$fake_runtime/lib/wine/game-mode/Overwatch.app/Contents/MacOS/wine"
+chmod 755 "$fake_runtime/lib/wine/game-mode/Overwatch.app/Contents/MacOS/wine"
+gm_env="$test_root/gm.env"
+
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$gm_data" \
+  NOTRECALL_TEST_DISPLAY_DEFAULT="1920 1080 144" \
+  TEST_ENV_OUT="$gm_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+assert_env "$gm_env" "WINE_GAME_MODE=Overwatch.exe"
+gm_ini="$gm_data/pfx/drive_c/users/steamuser/Documents/Overwatch/Settings/Settings_v0.ini"
+[ -f "$gm_ini" ]
+grep -Fq 'FullScreenWidth = "1920"' "$gm_ini"
+grep -Fq 'FullScreenHeight = "1080"' "$gm_ini"
+grep -Fq 'FullScreenRefresh = "144"' "$gm_ini"
+grep -Fq 'GFXPresetLevel = "1"' "$gm_ini"
+grep -Fq 'FrameRateCap = "600"' "$gm_ini"
+grep -Fq 'VerticalSyncEnabled = "0"' "$gm_ini"
+grep -Fq 'DynamicRenderScale = "0"' "$gm_ini"
+grep -Fq 'dxgi.fullscreenCanvasWidth = 1920' "$gm_data/notrecall-dxmt.conf"
+grep -Fq 'dxgi.fullscreenCanvasHeight = 1080' "$gm_data/notrecall-dxmt.conf"
+
+# Subsequent launch preserves player's in-game resolution/graphics edits and syncs dxmt.conf canvas.
+sed -i '' 's/FullScreenWidth = "1920"/FullScreenWidth = "2560"/; s/FullScreenHeight = "1080"/FullScreenHeight = "1440"/; s/GFXPresetLevel = "1"/GFXPresetLevel = "3"/' "$gm_ini"
+gm_off_env="$test_root/gm_off.env"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$gm_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_ENV_OUT="$gm_off_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+assert_env_absent "$gm_off_env" "WINE_GAME_MODE"
+grep -Fq 'FullScreenWidth = "2560"' "$gm_ini"
+grep -Fq 'FullScreenHeight = "1440"' "$gm_ini"
+grep -Fq 'GFXPresetLevel = "3"' "$gm_ini"
+grep -Fq 'dxgi.fullscreenCanvasWidth = 2560' "$gm_data/notrecall-dxmt.conf"
+grep -Fq 'dxgi.fullscreenCanvasHeight = 1440' "$gm_data/notrecall-dxmt.conf"
+echo "    OK: Recall native WINE_GAME_MODE, Overwatch Settings_v0.ini baseline seeding, and dxmt.conf canvas sync"
+
 
 
 echo "==> Testing scripts/install.sh --dry-run against a mock Recall.app bundle"
