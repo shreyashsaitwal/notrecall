@@ -27,10 +27,12 @@ echo "    OK: compatibilitytool.vdf & toolmanifest.vdf"
 
 echo "==> Checking NotProton plugin descriptor (50-notrecall.conf)"
 [ -f "$PROJECT_DIR/plugins/50-notrecall.conf" ]
-grep -Fq "[NOTPROTON_NOTRECALL_METALFX]" "$PROJECT_DIR/plugins/50-notrecall.conf"
+first_sec=$(grep -E '^\[NOTPROTON_' "$PROJECT_DIR/plugins/50-notrecall.conf" | head -1)
+[ "$first_sec" = "[NOTPROTON_NOTRECALL]" ]
+grep -Fq "label          = NotRecall" "$PROJECT_DIR/plugins/50-notrecall.conf"
 grep -Fq "hide_crossover = 1" "$PROJECT_DIR/plugins/50-notrecall.conf"
 grep -Fq "tools          = notrecall-proton*" "$PROJECT_DIR/plugins/50-notrecall.conf"
-echo "    OK: plugins/50-notrecall.conf present with hide_crossover = 1"
+echo "    OK: plugins/50-notrecall.conf has [NOTPROTON_NOTRECALL] header and hide_crossover = 1"
 
 echo "==> Running behavioral tests for compat/run (Overwatch defaults & env contract)"
 test_root=$(mktemp -d)
@@ -452,6 +454,7 @@ np_env="$test_root/np_plugin.env"
 HOME="$fake_home" \
   STEAM_COMPAT_APP_ID=2357570 \
   STEAM_COMPAT_DATA_PATH="$cfg_data" \
+  NOTPROTON_NOTRECALL=1 \
   NOTPROTON_NOTRECALL_METALFX=1 \
   NOTPROTON_NOTRECALL_MTL_HUD=1 \
   NOTPROTON_NOTRECALL_DISABLE_GAMEMODE=1 \
@@ -470,6 +473,17 @@ assert_env "$np_env" "WINEMAC_RAW_SOURCE=hid"
 grep -Fq "d3d11.metalfxSharpness=0.8" "$np_env"
 grep -Fq "d3d11.preferredMaxFrameRate=120" "$np_env"
 
+# Regression guard: when [NOTPROTON_NOTRECALL] master toggle is off, child plugin vars are ignored.
+np_off_env="$test_root/np_plugin_off.env"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$cfg_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTPROTON_NOTRECALL_MTL_HUD=1 \
+  TEST_ENV_OUT="$np_off_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+assert_env_absent "$np_off_env" "MTL_HUD_ENABLED"
+
 # Verify recovery toggles (NOTPROTON_NOTRECALL_REBUILD_SHADERS & NOTPROTON_NOTRECALL_RESET_DISPLAY) & BT mic toggle.
 mkdir -p "$cfg_data/notrecall-cache/cache/pipelines/ns/archives"
 : > "$cfg_data/notrecall-cache/cache/pipelines/ns/archive.json"
@@ -479,6 +493,7 @@ HOME="$fake_home" \
   STEAM_COMPAT_APP_ID=2357570 \
   STEAM_COMPAT_DATA_PATH="$cfg_data" \
   NOTRECALL_GAME_MODE=0 \
+  NOTPROTON_NOTRECALL=1 \
   NOTPROTON_NOTRECALL_REBUILD_SHADERS=1 \
   NOTPROTON_NOTRECALL_RESET_DISPLAY=1 \
   NOTPROTON_NOTRECALL_DISABLE_BT_MIC_FIX=1 \
