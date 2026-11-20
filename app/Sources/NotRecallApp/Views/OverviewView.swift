@@ -105,7 +105,7 @@ struct OverviewView: View {
                         notProtonReady: state.notProtonBridgeReady,
                         stagedRuntimeReady: state.stagedRuntimeReady,
                         runtimeSummary: state.stagedRuntimeSummary,
-                        steamToolAndPluginReady: state.steamToolInstalled && state.pluginInstalled,
+                        steamToolReady: state.steamToolInstalled,
                         overwatchShaderEntry: state.overwatchShaderEntry,
                         helpersInstalled: state.helpersInstalled,
                         onManageSetup: { state.selectedSection = .setup },
@@ -529,7 +529,7 @@ struct EnvironmentSnapshotCard: View {
     let notProtonReady: Bool
     let stagedRuntimeReady: Bool
     let runtimeSummary: String
-    let steamToolAndPluginReady: Bool
+    let steamToolReady: Bool
     let overwatchShaderEntry: ShaderCacheEntry?
     let helpersInstalled: Bool
     let onManageSetup: () -> Void
@@ -557,7 +557,7 @@ struct EnvironmentSnapshotCard: View {
                     StackStatusRow(title: "Rosetta 2", detail: rosettaInstalled ? "Verified (x86_64)" : "Missing", ok: rosettaInstalled)
                     StackStatusRow(title: "Steam & NotProton", detail: (steamInstalled && notProtonReady) ? "Bridge ready" : "Incomplete", ok: steamInstalled && notProtonReady)
                     StackStatusRow(title: "Recall Runtime", detail: stagedRuntimeReady ? runtimeSummary : "Not staged yet", ok: stagedRuntimeReady)
-                    StackStatusRow(title: "Steam Tool & Settings", detail: steamToolAndPluginReady ? "Installed in Steam" : "Not installed yet", ok: steamToolAndPluginReady)
+                    StackStatusRow(title: "Steam Compat Tool", detail: steamToolReady ? "Installed in Steam" : "Not installed yet", ok: steamToolReady)
                     StackStatusRow(title: "Shader Optimizer", detail: helpersInstalled ? "Ready in background" : "Not installed yet", ok: helpersInstalled)
                 }
 

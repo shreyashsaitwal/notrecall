@@ -92,7 +92,6 @@ final class AppState: ObservableObject {
     @Published var downloadProgress: Double?
     @Published var downloadStatusText = ""
     @Published var steamToolInstalled = false
-    @Published var pluginInstalled = false
     @Published var helpersInstalled = false
     @Published var healthWarnings: [HealthWarning] = []
     @Published var overwatchInstalled = false
@@ -126,7 +125,6 @@ final class AppState: ObservableObject {
     var steamCompatTool: URL { home.appending(path: "Library/Application Support/Steam/compatibilitytools.d/notrecall-proton") }
     var steamConfigVDF: URL { home.appending(path: "Library/Application Support/Steam/config/config.vdf") }
     var overwatchHighlightsDir: URL { home.appending(path: "Movies/Overwatch") }
-    var pluginFile: URL { notProtonSupport.appending(path: "plugins/50-notrecall.conf") }
     var settingsEnvFile: URL { notRecallSupport.appending(path: "settings.env") }
 
     // KeyPath projections for GameSettings toggles/pickers (persists immediately on user change).
@@ -234,7 +232,7 @@ final class AppState: ObservableObject {
     }
 
     var isFullyInstalled: Bool {
-        stagedRuntimeReady && steamToolInstalled && pluginInstalled && helpersInstalled
+        stagedRuntimeReady && steamToolInstalled && helpersInstalled
     }
 
     var isReadyToPlay: Bool {
@@ -303,7 +301,6 @@ final class AppState: ObservableObject {
         stagedRuntimeVersion = Self.readRuntimeVersion(in: notRecallSupport.appending(path: "runtime"))
         installedRecallVersion = Self.readInstalledRecallVersion(in: notRecallSupport)
         steamToolInstalled = fm.isExecutableFile(atPath: steamCompatTool.appending(path: "run").path)
-        pluginInstalled = fm.fileExists(atPath: pluginFile.path)
         helpersInstalled = fm.isExecutableFile(atPath: notRecallSupport.appending(path: "helpers/portable-pipeline").path)
         gameSettings = GameSettings.load(from: settingsEnvFile)
 
@@ -857,7 +854,6 @@ final class AppState: ObservableObject {
         Staged Runtime:     \(stagedRuntimeReady ? (stagedRuntimeVersion ?? "ready") : "missing")
         Overwatch (2357570): \(overwatchInstalled ? "installed" : "not found") (compat tool: \(overwatchCompatTool ?? "unset"))
         Steam Compat Tool:  \(steamToolInstalled ? "installed" : "missing")
-        NotProton Plugin:   \(pluginInstalled ? "installed" : "missing")
         Shader Helpers:     \(helpersInstalled ? "installed" : "missing")
         Input Monitoring:   manual setup required (grant to Steam.app in System Settings)
         Shader Caches:      \(shaderCaches.count) game(s)

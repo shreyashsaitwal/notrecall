@@ -26,29 +26,6 @@ grep -q '"to_oslist" "macos"' "$PROJECT_DIR/compat/compatibilitytool.vdf"
 grep -q '"commandline" "/run %verb%"' "$PROJECT_DIR/compat/toolmanifest.vdf"
 echo "    OK: compatibilitytool.vdf & toolmanifest.vdf"
 
-echo "==> Validating plugins/50-notrecall.conf against NotProton's plugin parser"
-if [ -f "$NOTPROTON_DIR/dylib/feats/compat_run.sh" ]; then
-  # Extract np_conf_normalise directly from NotProton's compat_run.sh and run it on our plugin dir.
-  tmp_validator=$(mktemp)
-  trap 'rm -f "$tmp_validator"' EXIT
-  awk '/^np_conf_normalise\(\)/,/^)/' "$NOTPROTON_DIR/dylib/feats/compat_run.sh" > "$tmp_validator"
-  out=$(
-    # shellcheck disable=SC1090
-    . "$tmp_validator"
-    np_conf_normalise "$PROJECT_DIR/plugins" "" plugin
-  )
-  refused=$(printf '%s\n' "$out" | awk -F'\t' '$1 == "!" { print }')
-  if [ -n "$refused" ]; then
-    echo "FAIL: NotProton refused plugin entries:" >&2
-    printf '%s\n' "$refused" >&2
-    exit 1
-  fi
-  records=$(printf '%s\n' "$out" | awk -F'\t' '$1 != "!" && $1 !~ /^== / && !seen[$1]++ { n++ } END { print n + 0 }')
-  echo "    OK: NotProton accepted all $records plugin record(s) with 0 refusals"
-else
-  echo "    SKIP: NotProton repo not found at $NOTPROTON_DIR"
-fi
-
 echo "==> Running behavioral tests for compat/run (Overwatch defaults & env contract)"
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root" "${tmp_validator:-}"' EXIT

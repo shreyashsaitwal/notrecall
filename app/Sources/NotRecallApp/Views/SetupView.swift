@@ -156,12 +156,6 @@ struct SetupView: View {
                         )
                         Divider()
                         StackStatusRow(
-                            title: "Steam Settings Panel (NotProton Plugin)",
-                            detail: state.pluginInstalled ? "Installed — adds NotRecall options to Steam’s Compatibility tab" : "Not installed yet",
-                            ok: state.pluginInstalled
-                        )
-                        Divider()
-                        StackStatusRow(
                             title: "Background Shader Optimizer",
                             detail: state.helpersInstalled ? "Ready — compiles shaders between matches to reduce stutters" : "Not installed yet",
                             ok: state.helpersInstalled

@@ -2,7 +2,7 @@
 # Stages Recall's Wine + DXMT runtime (from a Recall .dmg, Recall.app,
 # runtime.tar.gz, or unpacked runtime directory), wires NotProton's Steamworks
 # bridge (ntdll.dll + lsteamclient), and installs the notrecall-proton Steam
-# compatibility tool and NotProton UI plugin.
+# compatibility tool.
 set -e
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
@@ -15,7 +15,7 @@ NP_SUPPORT="${NOTPROTON_SUPPORT:-$HOME/Library/Application Support/notproton}"
 NR_SUPPORT="$HOME/Library/Application Support/notrecall"
 STEAM_COMPAT_DIR="$HOME/Library/Application Support/Steam/compatibilitytools.d"
 TOOL_DST="$STEAM_COMPAT_DIR/notrecall-proton"
-PLUGIN_DST="$NP_SUPPORT/plugins/50-notrecall.conf"
+LEGACY_PLUGIN_DST="$NP_SUPPORT/plugins/50-notrecall.conf"
 DRY_RUN=0
 RUNTIME_ONLY=0
 FORCE_PATCH_NTDLL=0
@@ -265,7 +265,7 @@ fi
 echo "==> Staging Recall runtime from: $RUNTIME_SRC"
 run_cmd mkdir -p "$NR_SUPPORT" "$NR_SUPPORT/helpers"
 if [ "$RUNTIME_ONLY" -eq 0 ]; then
-  run_cmd mkdir -p "$TOOL_DST" "$NP_SUPPORT/plugins"
+  run_cmd mkdir -p "$TOOL_DST"
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -423,16 +423,19 @@ if [ -n "$sysinfo_bin" ]; then
   run_cmd chmod 755 "$NR_SUPPORT/helpers/notrecall-sysinfo"
 fi
 
-# 6. Install Steam compatibility tool bundle and NotProton UI plugin.
+# 6. Install Steam compatibility tool bundle and remove any legacy NotProton plugin.
 echo "==> Installing Steam compatibility tool to: $TOOL_DST"
 run_cmd cp -f "$PROJECT_DIR/compat/compatibilitytool.vdf" "$TOOL_DST/compatibilitytool.vdf"
 run_cmd cp -f "$PROJECT_DIR/compat/toolmanifest.vdf" "$TOOL_DST/toolmanifest.vdf"
 run_cmd cp -f "$PROJECT_DIR/compat/run" "$TOOL_DST/run"
 run_cmd chmod 755 "$TOOL_DST/run"
 
-echo "==> Installing NotProton plugin descriptor to: $PLUGIN_DST"
-run_cmd cp -f "$PROJECT_DIR/plugins/50-notrecall.conf" "$PLUGIN_DST"
+if [ -f "$LEGACY_PLUGIN_DST" ]; then
+  echo "==> Removing legacy NotProton plugin: $LEGACY_PLUGIN_DST"
+  run_cmd rm -f "$LEGACY_PLUGIN_DST"
+fi
 
 echo ""
 echo "Done!${RECALL_APP_VERSION:+ Installed Recall $RECALL_APP_VERSION runtime.} Restart Steam, then select 'NotRecall (Recall Wine + DXMT)' under:"
 echo "  Game -> Properties -> Compatibility -> Force the use of a specific Steam Play compatibility tool"
+echo "Configure MetalFX, Metal HUD, mouse mode, and other options directly in NotRecall.app (leave Steam Launch Options blank)."
