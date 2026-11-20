@@ -171,7 +171,7 @@ struct SetupView: View {
                 Task { await state.runProjectScript("scripts/uninstall.sh") }
             }
         } message: {
-            Text("This removes NotRecall’s Steam compatibility tool, NotProton plugin, and staged runtime. Your Steam games and saved highlights stay untouched.")
+            Text("This removes NotRecall’s Steam compatibility tool, staged runtime, settings, and downloaded Recall cache. Your Steam games and saved highlights stay untouched.")
         }
     }
 }

@@ -36,6 +36,14 @@ struct GameSettingsView: View {
 struct GraphicsSettingsCard: View {
     @ObservedObject var state: AppState
 
+    private var fpsPickerChoices: [Int] {
+        let current = state.fpsLimit
+        if current > 0 && !GameSettings.fpsChoices.contains(current) {
+            return (GameSettings.fpsChoices + [current]).sorted()
+        }
+        return GameSettings.fpsChoices
+    }
+
     var body: some View {
         SurfaceCard(padding: 16) {
             VStack(alignment: .leading, spacing: 12) {
@@ -102,7 +110,7 @@ struct GraphicsSettingsCard: View {
                     }
                     Spacer()
                     Picker("Frame Rate Limit", selection: $state.fpsLimit) {
-                        ForEach(GameSettings.fpsChoices, id: \.self) { fps in
+                        ForEach(fpsPickerChoices, id: \.self) { fps in
                             Text(fps == 0 ? "Off" : "\(fps) FPS").tag(fps)
                         }
                     }

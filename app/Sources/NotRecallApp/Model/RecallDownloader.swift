@@ -2,12 +2,15 @@ import CryptoKit
 import Foundation
 
 enum RecallDownloadError: LocalizedError {
+    case invalidFilename(String)
     case httpStatus(Int)
     case sha256Mismatch(expected: String, actual: String)
     case cancelled
 
     var errorDescription: String? {
         switch self {
+        case .invalidFilename(let name):
+            return "Refusing unsafe release filename: \(name)"
         case .httpStatus(let code):
             return "Download failed with HTTP \(code)."
         case .sha256Mismatch(let expected, let actual):
@@ -44,10 +47,16 @@ final class RecallDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         release: RecallReleaseInfo,
         onProgress: @escaping @Sendable (Double, Int64, Int64) -> Void
     ) async throws -> URL {
+        let safeName = URL(filePath: release.dmgName).lastPathComponent
+        guard !safeName.isEmpty, safeName != ".", safeName != "..",
+              !release.dmgName.contains("/"), !release.dmgName.contains("\\") else {
+            throw RecallDownloadError.invalidFilename(release.dmgName)
+        }
+
         let fm = FileManager.default
         let cacheDir = cacheDirectory()
         try fm.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-        let dest = cacheDir.appending(path: release.dmgName)
+        let dest = cacheDir.appending(path: safeName)
 
         // Reuse a verified cached DMG if already present.
         if fm.fileExists(atPath: dest.path), let expected = release.dmgSHA256 {
@@ -59,17 +68,27 @@ final class RecallDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             try? fm.removeItem(at: dest)
         }
 
-        let downloader = RecallDownloader(destinationURL: dest, onProgress: onProgress)
-        let downloadedURL = try await downloader.start(url: release.dmgURL)
-
-        if let expected = release.dmgSHA256?.lowercased() {
-            let actual = try sha256File(at: downloadedURL)
-            if actual != expected {
-                try? fm.removeItem(at: downloadedURL)
-                throw RecallDownloadError.sha256Mismatch(expected: expected, actual: actual)
+        let staging = cacheDir.appending(path: "\(safeName).part-\(UUID().uuidString)")
+        let downloader = RecallDownloader(destinationURL: staging, onProgress: onProgress)
+        do {
+            let downloadedURL = try await downloader.start(url: release.dmgURL)
+            if let expected = release.dmgSHA256?.lowercased() {
+                let actual = try sha256File(at: downloadedURL)
+                if actual != expected {
+                    try? fm.removeItem(at: downloadedURL)
+                    throw RecallDownloadError.sha256Mismatch(expected: expected, actual: actual)
+                }
             }
+            if fm.fileExists(atPath: dest.path) {
+                _ = try fm.replaceItemAt(dest, withItemAt: downloadedURL)
+            } else {
+                try fm.moveItem(at: downloadedURL, to: dest)
+            }
+            return dest
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
         }
-        return downloadedURL
     }
 
     private func start(url: URL) async throws -> URL {

@@ -289,22 +289,32 @@ final class AppState: ObservableObject {
         }
     }
 
+    private struct RefreshSnapshot: Sendable {
+        let steamAppURL: URL?
+        let notProtonAppURL: URL?
+        let notProtonBridgeReady: Bool
+        let stagedRuntimeReady: Bool
+        let stagedRuntimeVersion: String?
+        let installedRecallVersion: String?
+        let steamToolInstalled: Bool
+        let helpersInstalled: Bool
+        let gameSettings: GameSettings
+        let recallRuntimeDetected: URL?
+        let steamLibraryCount: Int
+        let rosettaInstalled: Bool
+        let healthWarnings: [HealthWarning]
+        let overwatchInstalled: Bool
+        let overwatchCompatTool: String?
+        let shaderCaches: [ShaderCacheEntry]
+        let recentLogTitle: String
+        let recentLogText: String
+    }
+
     func refresh(preserveLog: Bool = false) async {
-        let fm = FileManager.default
-        macOSSupported = ProcessInfo.processInfo.isOperatingSystemAtLeast(
+        let osOK = ProcessInfo.processInfo.isOperatingSystemAtLeast(
             OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 0)
         )
-        steamAppURL = Self.detectApp(named: "Steam.app", home: home)
-        notProtonAppURL = Self.detectApp(named: "NotProton.app", home: home)
-        notProtonBridgeReady = fm.fileExists(atPath: notProtonSupport.appending(path: "bridge").path)
-        stagedRuntimeReady = fm.isExecutableFile(atPath: notRecallSupport.appending(path: "runtime/bin/wine").path)
-        stagedRuntimeVersion = Self.readRuntimeVersion(in: notRecallSupport.appending(path: "runtime"))
-        installedRecallVersion = Self.readInstalledRecallVersion(in: notRecallSupport)
-        steamToolInstalled = fm.isExecutableFile(atPath: steamCompatTool.appending(path: "run").path)
-        helpersInstalled = fm.isExecutableFile(atPath: notRecallSupport.appending(path: "helpers/portable-pipeline").path)
-        gameSettings = GameSettings.load(from: settingsEnvFile)
-
-        recallRuntimeDetected = Self.detectRecallRuntime(home: home)
+        macOSSupported = osOK
 
         if !hasCheckedUpdates {
             hasCheckedUpdates = true
@@ -313,12 +323,27 @@ final class AppState: ObservableObject {
             }
         }
 
-        let libraries = Self.discoverSteamLibraries(home: home)
-        steamLibraryCount = libraries.count
-        let osOK = macOSSupported
+        let homeDir = home
+        let npSupport = notProtonSupport
+        let nrSupport = notRecallSupport
+        let compatTool = steamCompatTool
+        let settingsFile = settingsEnvFile
         let configVDF = steamConfigVDF
 
-        let scanResult = await Task.detached { () -> (Bool, [HealthWarning], Bool, String?, [ShaderCacheEntry], String, String) in
+        let snapshot = await Task.detached { () -> RefreshSnapshot in
+            let fm = FileManager.default
+            let steamApp = Self.detectApp(named: "Steam.app", home: homeDir)
+            let notProtonApp = Self.detectApp(named: "NotProton.app", home: homeDir)
+            let bridgeReady = fm.fileExists(atPath: npSupport.appending(path: "bridge").path)
+            let runtimeReady = fm.isExecutableFile(atPath: nrSupport.appending(path: "runtime/bin/wine").path)
+            let runtimeVer = Self.readRuntimeVersion(in: nrSupport.appending(path: "runtime"))
+            let recallVer = Self.readInstalledRecallVersion(in: nrSupport)
+            let toolInstalled = fm.isExecutableFile(atPath: compatTool.appending(path: "run").path)
+            let helpersReady = fm.isExecutableFile(atPath: nrSupport.appending(path: "helpers/portable-pipeline").path)
+            let settings = GameSettings.load(from: settingsFile)
+            let detectedRuntime = Self.detectRecallRuntime(home: homeDir)
+
+            let libraries = Self.discoverSteamLibraries(home: homeDir)
             let rosetta = Self.probeRosetta()
             let warnings = Self.collectHealthWarnings(macOSSupported: osOK, libraries: libraries)
             let names = Self.loadSteamAppNames(across: libraries)
@@ -326,17 +351,47 @@ final class AppState: ObservableObject {
             let owTool = SteamVDF.readCompatTool(forAppID: "2357570", in: configVDF)
             let caches = Self.scanShaderCaches(across: libraries, appNames: names)
             let (logTitle, logText) = Self.loadLatestLog(across: libraries, appNames: names)
-            return (rosetta, warnings, owInstalled, owTool, caches, logTitle, logText)
+            return RefreshSnapshot(
+                steamAppURL: steamApp,
+                notProtonAppURL: notProtonApp,
+                notProtonBridgeReady: bridgeReady,
+                stagedRuntimeReady: runtimeReady,
+                stagedRuntimeVersion: runtimeVer,
+                installedRecallVersion: recallVer,
+                steamToolInstalled: toolInstalled,
+                helpersInstalled: helpersReady,
+                gameSettings: settings,
+                recallRuntimeDetected: detectedRuntime,
+                steamLibraryCount: libraries.count,
+                rosettaInstalled: rosetta,
+                healthWarnings: warnings,
+                overwatchInstalled: owInstalled,
+                overwatchCompatTool: owTool,
+                shaderCaches: caches,
+                recentLogTitle: logTitle,
+                recentLogText: logText
+            )
         }.value
 
-        rosettaInstalled = scanResult.0
-        healthWarnings = scanResult.1
-        overwatchInstalled = scanResult.2
-        overwatchCompatTool = scanResult.3
-        shaderCaches = scanResult.4
+        steamAppURL = snapshot.steamAppURL
+        notProtonAppURL = snapshot.notProtonAppURL
+        notProtonBridgeReady = snapshot.notProtonBridgeReady
+        stagedRuntimeReady = snapshot.stagedRuntimeReady
+        stagedRuntimeVersion = snapshot.stagedRuntimeVersion
+        installedRecallVersion = snapshot.installedRecallVersion
+        steamToolInstalled = snapshot.steamToolInstalled
+        helpersInstalled = snapshot.helpersInstalled
+        gameSettings = snapshot.gameSettings
+        recallRuntimeDetected = snapshot.recallRuntimeDetected
+        steamLibraryCount = snapshot.steamLibraryCount
+        rosettaInstalled = snapshot.rosettaInstalled
+        healthWarnings = snapshot.healthWarnings
+        overwatchInstalled = snapshot.overwatchInstalled
+        overwatchCompatTool = snapshot.overwatchCompatTool
+        shaderCaches = snapshot.shaderCaches
         if !preserveLog {
-            recentLogTitle = scanResult.5
-            recentLogText = scanResult.6
+            recentLogTitle = snapshot.recentLogTitle
+            recentLogText = snapshot.recentLogText
         }
     }
 
@@ -371,13 +426,18 @@ final class AppState: ObservableObject {
     }
 
     func installRosetta() {
+        let command = "softwareupdate --install-rosetta --agree-to-license"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
         let proc = Process()
         proc.executableURL = URL(filePath: "/usr/bin/open")
         proc.arguments = ["-a", "Terminal"]
-        try? proc.run()
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString("softwareupdate --install-rosetta --agree-to-license", forType: .string)
-        statusMessage = "Copied 'softwareupdate --install-rosetta --agree-to-license' to clipboard and opened Terminal."
+        do {
+            try proc.run()
+            statusMessage = "Copied '\(command)' to clipboard and opened Terminal."
+        } catch {
+            statusMessage = "Copied '\(command)' to clipboard. Open Terminal and paste it to install Rosetta."
+        }
     }
 
     func checkForRecallUpdates(silent: Bool = false) async {
@@ -542,9 +602,16 @@ final class AppState: ObservableObject {
 
     func openOverwatchHighlights() {
         let fm = FileManager.default
-        try? fm.createDirectory(at: overwatchHighlightsDir, withIntermediateDirectories: true)
-        NSWorkspace.shared.open(overwatchHighlightsDir)
-        statusMessage = "Opened ~/Movies/Overwatch."
+        do {
+            try fm.createDirectory(at: overwatchHighlightsDir, withIntermediateDirectories: true)
+            if NSWorkspace.shared.open(overwatchHighlightsDir) {
+                statusMessage = "Opened ~/Movies/Overwatch."
+            } else {
+                statusMessage = "Could not open ~/Movies/Overwatch in Finder."
+            }
+        } catch {
+            statusMessage = "Could not create ~/Movies/Overwatch: \(error.localizedDescription)"
+        }
     }
 
     var defaultOverwatchResolutionLabel: String {
@@ -587,89 +654,93 @@ final class AppState: ObservableObject {
     }
 
     func resetOverwatchDisplaySettings() async {
-        let libraries = Self.discoverSteamLibraries(home: home)
-        let (defW, defH, defHz) = Self.mainDisplayDefault()
-        let fm = FileManager.default
-        var owCompatDirs = libraries.map { $0.appending(path: "compatdata/2357570") }
-            .filter { fm.fileExists(atPath: $0.appending(path: "pfx").path) }
-        if owCompatDirs.isEmpty, let first = libraries.first {
-            owCompatDirs = [first.appending(path: "compatdata/2357570")]
-        }
-        guard let compatDir = owCompatDirs.first else {
-            statusMessage = "No Steam library found for Overwatch."
-            return
-        }
-        let settingsDir = compatDir.appending(path: "pfx/drive_c/users/steamuser/Documents/Overwatch/Settings")
-        let iniURL = settingsDir.appending(path: "Settings_v0.ini")
-        let backupURL = compatDir.appending(path: "Settings_v0.before-display-reset.ini")
-        let stateURL = compatDir.appending(path: "notrecall-display.state")
-        do {
-            try fm.createDirectory(at: settingsDir, withIntermediateDirectories: true)
-            let orig = (try? String(contentsOf: iniURL, encoding: .utf8)) ?? "[Render.13]\n"
-            if fm.fileExists(atPath: iniURL.path) {
-                try? orig.write(to: backupURL, atomically: true, encoding: .utf8)
+        guard !isBusy else { return }
+        isBusy = true
+        defer { isBusy = false }
+        let homeDir = home
+        let message = await Task.detached { () -> String in
+            let libraries = Self.discoverSteamLibraries(home: homeDir)
+            let (defW, defH, defHz) = Self.mainDisplayDefault()
+            let fm = FileManager.default
+            let existingPfx = libraries.map { $0.appending(path: "compatdata/2357570") }
+                .first { fm.fileExists(atPath: $0.appending(path: "pfx").path) }
+            let owLibrary = libraries.first { fm.fileExists(atPath: $0.appending(path: "appmanifest_2357570.acf").path) }
+            guard let compatDir = existingPfx ?? (owLibrary ?? libraries.first)?.appending(path: "compatdata/2357570") else {
+                return "No Steam library found for Overwatch."
             }
-            let nl = orig.contains("\r\n") ? "\r\n" : "\n"
-            var lines = orig.isEmpty ? ["[Render.13]", ""] : orig.components(separatedBy: nl)
-            var rs = -1
-            var re = lines.count
-            for i in lines.indices {
-                let t = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
-                if rs < 0 && t == "[Render.13]" { rs = i + 1 }
-                else if rs >= 0 && t.hasPrefix("[") { re = i; break }
-            }
-            if rs < 0 {
-                if let last = lines.last, !last.isEmpty { lines.append("") }
-                lines.append("[Render.13]")
-                rs = lines.count
-                re = rs
-            }
-            let updates: [(String, String)] = [
-                ("DynamicRenderScale", "0"),
-                ("FullScreenHeight", String(defH)),
-                ("FullScreenRefresh", String(defHz)),
-                ("FullScreenWidth", String(defW)),
-                ("FullscreenWindow", "0"),
-                ("FullscreenWindowEnabled", "0"),
-                ("UseCustomWorldScale", "1"),
-                ("WindowMode", "0"),
-                ("WindowedFullscreen", "0"),
-                ("WindowedHeight", String(defH)),
-                ("WindowedPosX", "100"),
-                ("WindowedPosY", "100"),
-                ("WindowedWidth", String(defW)),
-            ]
-            var last = rs
-            for i in rs..<re where !lines[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                last = i + 1
-            }
-            for (key, value) in updates {
-                let newLine = "\(key) = \"\(value)\""
-                var foundIdx: Int? = nil
-                for i in rs..<re {
+            let settingsDir = compatDir.appending(path: "pfx/drive_c/users/steamuser/Documents/Overwatch/Settings")
+            let iniURL = settingsDir.appending(path: "Settings_v0.ini")
+            let backupURL = compatDir.appending(path: "Settings_v0.before-display-reset.ini")
+            let stateURL = compatDir.appending(path: "notrecall-display.state")
+            do {
+                try fm.createDirectory(at: settingsDir, withIntermediateDirectories: true)
+                let orig = (try? String(contentsOf: iniURL, encoding: .utf8)) ?? "[Render.13]\n"
+                if fm.fileExists(atPath: iniURL.path) {
+                    try? orig.write(to: backupURL, atomically: true, encoding: .utf8)
+                }
+                let nl = orig.contains("\r\n") ? "\r\n" : "\n"
+                var lines = orig.isEmpty ? ["[Render.13]", ""] : orig.components(separatedBy: nl)
+                var rs = -1
+                var re = lines.count
+                for i in lines.indices {
                     let t = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let eq = t.firstIndex(of: "="),
-                       t[..<eq].trimmingCharacters(in: .whitespaces) == key {
-                        foundIdx = i
-                        break
+                    if rs < 0 && t == "[Render.13]" { rs = i + 1 }
+                    else if rs >= 0 && t.hasPrefix("[") { re = i; break }
+                }
+                if rs < 0 {
+                    if let last = lines.last, !last.isEmpty { lines.append("") }
+                    lines.append("[Render.13]")
+                    rs = lines.count
+                    re = rs
+                }
+                let updates: [(String, String)] = [
+                    ("DynamicRenderScale", "0"),
+                    ("FullScreenHeight", String(defH)),
+                    ("FullScreenRefresh", String(defHz)),
+                    ("FullScreenWidth", String(defW)),
+                    ("FullscreenWindow", "0"),
+                    ("FullscreenWindowEnabled", "0"),
+                    ("UseCustomWorldScale", "1"),
+                    ("WindowMode", "0"),
+                    ("WindowedFullscreen", "0"),
+                    ("WindowedHeight", String(defH)),
+                    ("WindowedPosX", "100"),
+                    ("WindowedPosY", "100"),
+                    ("WindowedWidth", String(defW)),
+                ]
+                var last = rs
+                for i in rs..<re where !lines[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    last = i + 1
+                }
+                for (key, value) in updates {
+                    let newLine = "\(key) = \"\(value)\""
+                    var foundIdx: Int? = nil
+                    for i in rs..<re {
+                        let t = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let eq = t.firstIndex(of: "="),
+                           t[..<eq].trimmingCharacters(in: .whitespaces) == key {
+                            foundIdx = i
+                            break
+                        }
+                    }
+                    if let idx = foundIdx {
+                        lines[idx] = newLine
+                    } else {
+                        lines.insert(newLine, at: last)
+                        last += 1
+                        re += 1
                     }
                 }
-                if let idx = foundIdx {
-                    lines[idx] = newLine
-                } else {
-                    lines.insert(newLine, at: last)
-                    last += 1
-                    re += 1
-                }
+                var updated = lines.joined(separator: nl)
+                if !updated.hasSuffix(nl) { updated += nl }
+                try updated.write(to: iniURL, atomically: true, encoding: .utf8)
+                try? fm.removeItem(at: stateURL)
+                return "Reset Overwatch display settings to \(defW) × \(defH) fullscreen. Your graphics quality and FPS settings were kept."
+            } catch {
+                return "Could not reset display settings: \(error.localizedDescription)"
             }
-            var updated = lines.joined(separator: nl)
-            if !updated.hasSuffix(nl) { updated += nl }
-            try updated.write(to: iniURL, atomically: true, encoding: .utf8)
-            try? fm.removeItem(at: stateURL)
-            statusMessage = "Reset Overwatch display settings to \(defW) × \(defH) fullscreen. Your graphics quality and FPS settings were kept."
-        } catch {
-            statusMessage = "Could not reset display settings: \(error.localizedDescription)"
-        }
+        }.value
+        statusMessage = message
     }
 
     nonisolated private static func mainDisplayDefault() -> (Int, Int, Int) {
@@ -707,9 +778,12 @@ final class AppState: ObservableObject {
             var exited = false
             for _ in 0..<24 {
                 let guiGone = NSRunningApplication.runningApplications(withBundleIdentifier: "com.valvesoftware.steam").isEmpty
-                if guiGone && !Self.isSteamHelperRunning() {
-                    exited = true
-                    break
+                if guiGone {
+                    let helperRunning = await Task.detached { Self.isSteamHelperRunning() }.value
+                    if !helperRunning {
+                        exited = true
+                        break
+                    }
                 }
                 try? await Task.sleep(for: .milliseconds(250))
             }
@@ -719,8 +793,11 @@ final class AppState: ObservableObject {
             }
         }
 
+        let configVDF = steamConfigVDF
         do {
-            try SteamVDF.setCompatTool(forAppID: "2357570", toolName: "notrecall-proton", in: steamConfigVDF)
+            try await Task.detached {
+                try SteamVDF.setCompatTool(forAppID: "2357570", toolName: "notrecall-proton", in: configVDF)
+            }.value
             try await NSWorkspace.shared.openApplication(at: steam, configuration: NSWorkspace.OpenConfiguration())
             statusMessage = "Configured Overwatch (AppID 2357570) to use NotRecall in Steam and relaunched Steam."
         } catch {
@@ -767,29 +844,38 @@ final class AppState: ObservableObject {
     }
 
     func clearShaderCache(_ entry: ShaderCacheEntry) async {
-        let fm = FileManager.default
-        do {
-            try fm.removeItem(at: entry.path)
-            for metalCache in Self.gameAppMetalCacheURLs(forAppID: entry.appID) where fm.fileExists(atPath: metalCache.path) {
-                try? fm.removeItem(at: metalCache)
+        guard !isBusy else { return }
+        isBusy = true
+        defer { isBusy = false }
+        let message = await Task.detached { () -> String in
+            let fm = FileManager.default
+            do {
+                try fm.removeItem(at: entry.path)
+                for metalCache in Self.gameAppMetalCacheURLs(forAppID: entry.appID) where fm.fileExists(atPath: metalCache.path) {
+                    try? fm.removeItem(at: metalCache)
+                }
+                return "Cleared shader cache for \(entry.displayTitle)."
+            } catch {
+                return "Failed to clear cache: \(error.localizedDescription)"
             }
-            statusMessage = "Cleared shader cache for \(entry.displayTitle)."
-        } catch {
-            statusMessage = "Failed to clear cache: \(error.localizedDescription)"
-        }
+        }.value
+        statusMessage = message
         await refresh()
     }
 
     func requestRebuildShaders(_ entry: ShaderCacheEntry) async {
         let markerDir = entry.path.appending(path: "cache")
         let marker = markerDir.appending(path: "rebuild-shaders")
-        do {
-            try FileManager.default.createDirectory(at: markerDir, withIntermediateDirectories: true)
-            try Data("1\n".utf8).write(to: marker)
-            statusMessage = "Queued shader rebuild for \(entry.displayTitle) on next launch."
-        } catch {
-            statusMessage = "Failed to queue shader rebuild: \(error.localizedDescription)"
-        }
+        let message = await Task.detached { () -> String in
+            do {
+                try FileManager.default.createDirectory(at: markerDir, withIntermediateDirectories: true)
+                try Data("1\n".utf8).write(to: marker, options: .atomic)
+                return "Queued shader rebuild for \(entry.displayTitle) on next launch."
+            } catch {
+                return "Failed to queue shader rebuild: \(error.localizedDescription)"
+            }
+        }.value
+        statusMessage = message
         await refresh()
     }
 
@@ -851,6 +937,7 @@ final class AppState: ObservableObject {
         Steam Libraries:    \(steamLibraryCount)
         NotProton Bridge:   \(notProtonBridgeReady ? "ready" : "missing")
         Runtime Source:     \(activeRuntimeSource?.path ?? "none")
+        Recall Release:     \(installedRecallVersion ?? "unknown")
         Staged Runtime:     \(stagedRuntimeReady ? (stagedRuntimeVersion ?? "ready") : "missing")
         Overwatch (2357570): \(overwatchInstalled ? "installed" : "not found") (compat tool: \(overwatchCompatTool ?? "unset"))
         Steam Compat Tool:  \(steamToolInstalled ? "installed" : "missing")
@@ -994,7 +1081,7 @@ final class AppState: ObservableObject {
                 warnings.append(HealthWarning(
                     id: "recent_gpu_hang",
                     title: "Overwatch’s graphics stopped responding recently",
-                    detail: "Try Rebuild Shaders in Shaders, or lower Shader memory in Steam’s Compatibility settings.",
+                    detail: "Try Rebuild Shaders in Shaders, or lower Shader Memory in Game Settings.",
                     isCritical: false
                 ))
                 break

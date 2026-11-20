@@ -55,14 +55,14 @@ extension Animation {
 struct NotRecallEmblem: View {
     var size: CGFloat = 28
 
-    private var bundledIcon: NSImage? {
+    private static let bundledIcon: NSImage? = {
         Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
             .flatMap { NSImage(contentsOf: $0) }
-    }
+    }()
 
     var body: some View {
         Group {
-            if let bundledIcon {
+            if let bundledIcon = Self.bundledIcon {
                 Image(nsImage: bundledIcon)
                     .resizable()
                     .interpolation(.high)
