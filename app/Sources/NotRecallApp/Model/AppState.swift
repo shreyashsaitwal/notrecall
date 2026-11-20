@@ -37,6 +37,33 @@ struct HealthWarning: Identifiable, Hashable, Sendable {
     let isCritical: Bool
 }
 
+enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
+    case overview
+    case setup
+    case shaders
+    case logs
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .overview: return "Overview"
+        case .setup: return "Setup & Runtime"
+        case .shaders: return "Shaders"
+        case .logs: return "Logs"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .overview: return "square.grid.2x2"
+        case .setup: return "shippingbox"
+        case .shaders: return "cpu"
+        case .logs: return "terminal"
+        }
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var rosettaInstalled = false
@@ -51,9 +78,14 @@ final class AppState: ObservableObject {
     @Published var installedRecallVersion: String?
     @Published var latestRecallRelease: RecallReleaseInfo?
     @Published var isCheckingForUpdates = false
+    @Published var selectedSection: SidebarSection = .overview
     @Published var showWhatsNewSheet = false
     @Published var confirmForceQuit = false
     @Published var confirmResetDisplay = false
+    @Published var confirmUninstall = false
+    @Published var pendingClearShaderEntry: ShaderCacheEntry?
+    @Published var pendingRebuildShaderEntry: ShaderCacheEntry?
+    @Published var diagnosticsCopied = false
     @Published var downloadProgress: Double?
     @Published var downloadStatusText = ""
     @Published var steamToolInstalled = false
@@ -69,7 +101,16 @@ final class AppState: ObservableObject {
     @Published var recentLogTitle = ""
     @Published var statusMessage = ""
     @Published var isBusy = false
-    @Published var selectedTab = 0
+
+    var isConfirmingClearShader: Bool {
+        get { pendingClearShaderEntry != nil }
+        set { if !newValue { pendingClearShaderEntry = nil } }
+    }
+
+    var isConfirmingRebuildShader: Bool {
+        get { pendingRebuildShaderEntry != nil }
+        set { if !newValue { pendingRebuildShaderEntry = nil } }
+    }
 
     private var hasCheckedUpdates = false
     private var activeDownloadTask: Task<Void, Never>?
@@ -100,6 +141,64 @@ final class AppState: ObservableObject {
 
     var hasMissingPrerequisites: Bool {
         !rosettaInstalled || steamAppURL == nil || !notProtonBridgeReady
+    }
+
+    var isFullyInstalled: Bool {
+        stagedRuntimeReady && steamToolInstalled && pluginInstalled && helpersInstalled
+    }
+
+    var isReadyToPlay: Bool {
+        !hasMissingPrerequisites && isFullyInstalled && overwatchInstalled && overwatchConfiguredForNotRecall
+    }
+
+    var appVersionString: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    }
+
+    var anyShaderCompiling: Bool {
+        shaderCaches.contains(where: \.isCompiling)
+    }
+
+    var anyShaderNeedsMacOSOptimization: Bool {
+        shaderCaches.contains(where: { $0.needsMacOSOptimization && !$0.isCompiling })
+    }
+
+    var stagedRuntimeSummary: String {
+        var parts: [String] = []
+        if let recallVer = installedRecallVersion {
+            parts.append("Recall \(recallVer)")
+        }
+        if let rtVer = stagedRuntimeVersion {
+            parts.append(rtVer)
+        }
+        if parts.isEmpty {
+            return notRecallSupport.appending(path: "runtime").path
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var totalShaderCacheFormatted: String {
+        let total = shaderCaches.reduce(Int64(0)) { $0 + $1.sizeBytes }
+        return ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+    }
+
+    var totalShaderPackCount: Int {
+        shaderCaches.reduce(0) { $0 + $1.archiveCount }
+    }
+
+    var overwatchShaderEntry: ShaderCacheEntry? {
+        shaderCaches.first(where: { $0.appID == "2357570" }) ?? shaderCaches.first
+    }
+
+    func dismissStatusMessage() {
+        statusMessage = ""
+    }
+
+    func openBatterySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Battery-Settings.extension") else { return }
+        if NSWorkspace.shared.open(url) {
+            statusMessage = "Opened Battery settings. Turn off Low Power Mode for full performance."
+        }
     }
 
     func refresh(preserveLog: Bool = false) async {
@@ -570,11 +669,11 @@ final class AppState: ObservableObject {
                 return (1, error.localizedDescription)
             }
         }.value
-        statusMessage = result.0 == 0 ? "Completed \(relativePath)." : "Failed (\(result.0)): see Logs tab."
+        statusMessage = result.0 == 0 ? "Completed \(relativePath)." : "Failed (\(result.0)): see Logs."
         recentLogTitle = "\(relativePath) \(extraArgs.joined(separator: " "))"
         recentLogText = result.1
         if switchToLogs || result.0 != 0 {
-            selectedTab = 2
+            selectedSection = .logs
         }
         await refresh(preserveLog: true)
     }
@@ -679,6 +778,11 @@ final class AppState: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(report, forType: .string)
         statusMessage = "Copied diagnostics report to clipboard."
+        diagnosticsCopied = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            self?.diagnosticsCopied = false
+        }
     }
 
     private func locateProjectScript(_ relativePath: String) -> URL? {
@@ -803,7 +907,7 @@ final class AppState: ObservableObject {
                 warnings.append(HealthWarning(
                     id: "recent_gpu_hang",
                     title: "Overwatch’s graphics stopped responding recently",
-                    detail: "Try Rebuild Shaders in the Shaders tab, or lower Shader memory in Steam’s Compatibility settings.",
+                    detail: "Try Rebuild Shaders in Shaders, or lower Shader memory in Steam’s Compatibility settings.",
                     isCritical: false
                 ))
                 break
