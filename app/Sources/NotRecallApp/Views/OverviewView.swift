@@ -26,7 +26,6 @@ struct OverviewView: View {
                             state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: false)
                         }
                     },
-                    onOpenSetup: { state.selectedSection = .setup },
                     onOpenHighlights: { state.openOverwatchHighlights() },
                     onCancelDownload: { state.cancelDownload() }
                 )
@@ -41,7 +40,6 @@ struct OverviewView: View {
                     shaderPackCount: state.totalShaderPackCount,
                     anyShaderCompiling: state.anyShaderCompiling,
                     anyShaderNeedsMacOSOptimization: state.anyShaderNeedsMacOSOptimization,
-                    onOpenSetup: { state.selectedSection = .setup },
                     onOpenShaders: { state.selectedSection = .shaders },
                     onOpenWhatsNew: { state.showWhatsNewSheet = true }
                 )
@@ -85,13 +83,43 @@ struct OverviewView: View {
                     )
                 }
 
+                RuntimeManagementCard(
+                    activeRuntimeSource: state.activeRuntimeSource,
+                    hasCustomRuntime: state.customRuntimeURL != nil,
+                    preferredDownloadTitle: state.preferredDownloadRelease.title,
+                    preferredDownloadSize: state.preferredDownloadRelease.formattedSize,
+                    stagedRuntimeReady: state.stagedRuntimeReady,
+                    isBusy: state.isBusy,
+                    onChooseLocal: { state.selectLocalRuntime() },
+                    onResetLocal: { state.clearCustomRuntime() },
+                    onInstallOrUpdate: {
+                        if let rt = state.activeRuntimeSource {
+                            Task { await state.runProjectScript("scripts/install.sh", extraArgs: ["--runtime", rt.path]) }
+                        } else {
+                            state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: false)
+                        }
+                    },
+                    onUpdateRuntimeOnly: {
+                        if let rt = state.activeRuntimeSource {
+                            Task { await state.runProjectScript("scripts/install.sh", extraArgs: ["--runtime-only", "--runtime", rt.path]) }
+                        } else {
+                            state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: true)
+                        }
+                    },
+                    onDryRun: {
+                        Task {
+                            var args = ["--dry-run"]
+                            if let rt = state.activeRuntimeSource { args += ["--runtime", rt.path] }
+                            await state.runProjectScript("scripts/install.sh", extraArgs: args, switchToLogs: true)
+                        }
+                    },
+                    onUninstall: { state.confirmUninstall = true }
+                )
+
                 HStack(alignment: .top, spacing: 14) {
-                    PlayerControlsCard(
-                        metalFXUpscaling: $state.metalFXUpscaling,
-                        metalHUD: $state.metalHUD,
+                    RecoveryControlsCard(
                         hasSteamApp: state.steamAppURL != nil,
                         isBusy: state.isBusy,
-                        onOpenAllSettings: { state.selectedSection = .settings },
                         onShowSteam: { state.revealSteamInFinder() },
                         onOpenInputMonitoring: { state.openInputMonitoringSettings() },
                         onResetDisplay: { state.confirmResetDisplay = true },
@@ -102,13 +130,17 @@ struct OverviewView: View {
                     EnvironmentSnapshotCard(
                         rosettaInstalled: state.rosettaInstalled,
                         steamInstalled: state.steamAppURL != nil,
+                        steamPath: state.steamAppURL?.path,
                         notProtonReady: state.notProtonBridgeReady,
+                        notProtonSupportPath: state.notProtonSupport.path,
                         stagedRuntimeReady: state.stagedRuntimeReady,
                         runtimeSummary: state.stagedRuntimeSummary,
                         steamToolReady: state.steamToolInstalled,
+                        steamToolPath: state.steamCompatTool.path,
                         overwatchShaderEntry: state.overwatchShaderEntry,
                         helpersInstalled: state.helpersInstalled,
-                        onManageSetup: { state.selectedSection = .setup },
+                        onInstallRosetta: { state.installRosetta() },
+                        onOpenNotProton: { state.openNotProton() },
                         onOpenShaders: { state.selectedSection = .shaders },
                         onOptimizeShader: { entry in Task { await state.optimizeShadersNow(entry) } },
                         onRebuildShader: { entry in state.pendingRebuildShaderEntry = entry }
@@ -136,7 +168,6 @@ struct OverwatchHeroCard: View {
     let onPlayOverwatch: () -> Void
     let onConfigureOverwatch: () -> Void
     let onInstall: () -> Void
-    let onOpenSetup: () -> Void
     let onOpenHighlights: () -> Void
     let onCancelDownload: () -> Void
 
@@ -163,7 +194,7 @@ struct OverwatchHeroCard: View {
         }
         if overwatchInstalled && overwatchConfigured {
             let ver = installedRecallVersion.map { "Recall \($0)" } ?? "Recall runtime"
-            return "Configured in Steam with \(ver), MetalFX upscaling, and Game Mode."
+            return "Configured in Steam with \(ver). Customize per-game options in Steam’s Compatibility tab."
         }
         if overwatchInstalled {
             return "Overwatch is installed in Steam. Click Set Up in Steam to configure it automatically."
@@ -193,29 +224,27 @@ struct OverwatchHeroCard: View {
                     Spacer(minLength: 12)
 
                     HStack(spacing: 8) {
-                        if hasMissingPrerequisites {
-                            Button("Finish Setup", action: onOpenSetup)
-                                .buttonStyle(BrandButtonStyle())
-                                .disabled(isBusy)
-                        } else if !isFullyInstalled {
-                            Button(hasLocalRuntime ? "Install NotRecall" : "Download & Install", action: onInstall)
+                        if !hasMissingPrerequisites {
+                            if !isFullyInstalled {
+                                Button(hasLocalRuntime ? "Install NotRecall" : "Download & Install", action: onInstall)
+                                    .buttonStyle(BrandButtonStyle())
+                                    .keyboardShortcut(.defaultAction)
+                                    .disabled(isBusy)
+                            } else if overwatchInstalled && !overwatchConfigured {
+                                Button(action: onConfigureOverwatch) {
+                                    Label("Set Up in Steam", systemImage: "wand.and.stars")
+                                }
                                 .buttonStyle(BrandButtonStyle())
                                 .keyboardShortcut(.defaultAction)
-                                .disabled(isBusy)
-                        } else if overwatchInstalled && !overwatchConfigured {
-                            Button(action: onConfigureOverwatch) {
-                                Label("Set Up in Steam", systemImage: "wand.and.stars")
+                                .disabled(isBusy || !hasSteamApp)
+                            } else if overwatchInstalled {
+                                Button(action: onPlayOverwatch) {
+                                    Label("Play Overwatch", systemImage: "play.fill")
+                                }
+                                .buttonStyle(BrandButtonStyle())
+                                .keyboardShortcut(.defaultAction)
+                                .disabled(isBusy || !hasSteamApp)
                             }
-                            .buttonStyle(BrandButtonStyle())
-                            .keyboardShortcut(.defaultAction)
-                            .disabled(isBusy || !hasSteamApp)
-                        } else if overwatchInstalled {
-                            Button(action: onPlayOverwatch) {
-                                Label("Play Overwatch", systemImage: "play.fill")
-                            }
-                            .buttonStyle(BrandButtonStyle())
-                            .keyboardShortcut(.defaultAction)
-                            .disabled(isBusy || !hasSteamApp)
                         }
 
                         Button(action: onOpenHighlights) {
@@ -265,7 +294,6 @@ struct MetricsBentoRow: View {
     let shaderPackCount: Int
     let anyShaderCompiling: Bool
     let anyShaderNeedsMacOSOptimization: Bool
-    let onOpenSetup: () -> Void
     let onOpenShaders: () -> Void
     let onOpenWhatsNew: () -> Void
 
@@ -286,7 +314,7 @@ struct MetricsBentoRow: View {
                 caption: availableUpdateVersion.map { "Update v\($0) ready" } ?? (stagedRuntimeReady ? "Up to date" : "Download or choose local copy"),
                 symbol: availableUpdateVersion != nil ? "arrow.down.circle.fill" : "shippingbox.fill",
                 tint: availableUpdateVersion != nil ? NotRecallTheme.brand : (stagedRuntimeReady ? NotRecallTheme.healthy : NotRecallTheme.warning),
-                action: availableUpdateVersion != nil ? onOpenWhatsNew : onOpenSetup
+                action: availableUpdateVersion != nil ? onOpenWhatsNew : nil
             )
 
             MetricTile(
@@ -427,14 +455,96 @@ struct OverviewHealthWarnings: View {
     }
 }
 
-// MARK: - Two-Column Bottom Cards (Always Visible on Main Screen)
+// MARK: - Runtime Source & Installation Management
 
-struct PlayerControlsCard: View {
-    @Binding var metalFXUpscaling: Bool
-    @Binding var metalHUD: Bool
+struct RuntimeManagementCard: View {
+    let activeRuntimeSource: URL?
+    let hasCustomRuntime: Bool
+    let preferredDownloadTitle: String
+    let preferredDownloadSize: String?
+    let stagedRuntimeReady: Bool
+    let isBusy: Bool
+    let onChooseLocal: () -> Void
+    let onResetLocal: () -> Void
+    let onInstallOrUpdate: () -> Void
+    let onUpdateRuntimeOnly: () -> Void
+    let onDryRun: () -> Void
+    let onUninstall: () -> Void
+
+    var body: some View {
+        SurfaceCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                CardHeader(
+                    title: "Recall Runtime & Installation",
+                    subtitle: "Choose a local Recall .dmg or Recall.app, or download and verify the latest GitHub release.",
+                    symbol: "shippingbox"
+                )
+
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: activeRuntimeSource != nil ? "checkmark.circle.fill" : "arrow.down.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(activeRuntimeSource != nil ? NotRecallTheme.healthy : NotRecallTheme.brand)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(hasCustomRuntime ? "Custom Recall File" : (activeRuntimeSource != nil ? "Local Recall Copy" : "GitHub Release Download"))
+                            .font(NotRecallTheme.font(13, .semibold))
+                        Text(
+                            activeRuntimeSource?.path
+                                ?? "Downloads \(preferredDownloadTitle) from GitHub\(preferredDownloadSize.map { " (\($0))" } ?? "")"
+                        )
+                        .font(NotRecallTheme.font(11.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    HStack(spacing: 6) {
+                        Button("Choose…", action: onChooseLocal)
+                            .buttonStyle(SubtleButtonStyle(compact: true))
+                            .disabled(isBusy)
+                        if hasCustomRuntime {
+                            Button("Reset", action: onResetLocal)
+                                .buttonStyle(SubtleButtonStyle(compact: true))
+                                .disabled(isBusy)
+                        }
+                    }
+                }
+
+                Divider()
+
+                HStack(spacing: 8) {
+                    Button(activeRuntimeSource != nil ? "Install / Update" : "Download & Install", action: onInstallOrUpdate)
+                        .buttonStyle(BrandButtonStyle(compact: true))
+                        .disabled(isBusy)
+
+                    if stagedRuntimeReady {
+                        Button("Update Runtime Only", action: onUpdateRuntimeOnly)
+                            .buttonStyle(SubtleButtonStyle(compact: true))
+                            .disabled(isBusy)
+                    }
+
+                    Button("Dry Run", action: onDryRun)
+                        .buttonStyle(SubtleButtonStyle(compact: true))
+                        .disabled(isBusy)
+
+                    Spacer()
+
+                    Button("Uninstall…", action: onUninstall)
+                        .buttonStyle(SubtleButtonStyle(destructive: true, compact: true))
+                        .disabled(isBusy)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Two-Column Bottom Cards (Recovery & Stack)
+
+struct RecoveryControlsCard: View {
     let hasSteamApp: Bool
     let isBusy: Bool
-    let onOpenAllSettings: () -> Void
     let onShowSteam: () -> Void
     let onOpenInputMonitoring: () -> Void
     let onResetDisplay: () -> Void
@@ -444,32 +554,11 @@ struct PlayerControlsCard: View {
     var body: some View {
         SurfaceCard(padding: 16) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top) {
-                    CardHeader(
-                        title: "Quick Controls & Recovery",
-                        subtitle: "Saved directly by NotRecall — no Steam Launch Options needed.",
-                        symbol: "slider.horizontal.3"
-                    )
-                    Spacer(minLength: 8)
-                    Button("All Settings", action: onOpenAllSettings)
-                        .buttonStyle(.borderless)
-                        .font(NotRecallTheme.font(12, .medium))
-                        .foregroundStyle(NotRecallTheme.brand)
-                }
-
-                SettingsToggleRow(
-                    title: "MetalFX Upscaling",
-                    detail: "Enables NVIDIA DLSS in Overwatch via Apple MetalFX.",
-                    isOn: $metalFXUpscaling
+                CardHeader(
+                    title: "Recovery & Input",
+                    subtitle: "Per-game options live in Steam’s Properties › Compatibility tab.",
+                    symbol: "wrench.and.screwdriver"
                 )
-
-                SettingsToggleRow(
-                    title: "Metal Performance HUD",
-                    detail: "Shows FPS, frame time, and shader overlay in game.",
-                    isOn: $metalHUD
-                )
-
-                Divider()
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("High-Precision Mouse")
@@ -526,13 +615,17 @@ struct PlayerControlsCard: View {
 struct EnvironmentSnapshotCard: View {
     let rosettaInstalled: Bool
     let steamInstalled: Bool
+    let steamPath: String?
     let notProtonReady: Bool
+    let notProtonSupportPath: String
     let stagedRuntimeReady: Bool
     let runtimeSummary: String
     let steamToolReady: Bool
+    let steamToolPath: String
     let overwatchShaderEntry: ShaderCacheEntry?
     let helpersInstalled: Bool
-    let onManageSetup: () -> Void
+    let onInstallRosetta: () -> Void
+    let onOpenNotProton: () -> Void
     let onOpenShaders: () -> Void
     let onOptimizeShader: (ShaderCacheEntry) -> Void
     let onRebuildShader: (ShaderCacheEntry) -> Void
@@ -540,25 +633,47 @@ struct EnvironmentSnapshotCard: View {
     var body: some View {
         SurfaceCard(padding: 16) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top) {
-                    CardHeader(
-                        title: "Stack & Shaders",
-                        subtitle: "Live status of your macOS compatibility stack.",
-                        symbol: "checkmark.seal"
-                    )
-                    Spacer(minLength: 8)
-                    Button("Manage", action: onManageSetup)
-                        .buttonStyle(.borderless)
-                        .font(NotRecallTheme.font(12, .medium))
-                        .foregroundStyle(NotRecallTheme.brand)
-                }
+                CardHeader(
+                    title: "Stack & Shaders",
+                    subtitle: "Live status of your macOS compatibility stack.",
+                    symbol: "checkmark.seal"
+                )
 
                 VStack(alignment: .leading, spacing: 8) {
-                    StackStatusRow(title: "Rosetta 2", detail: rosettaInstalled ? "Verified (x86_64)" : "Missing", ok: rosettaInstalled)
-                    StackStatusRow(title: "Steam & NotProton", detail: (steamInstalled && notProtonReady) ? "Bridge ready" : "Incomplete", ok: steamInstalled && notProtonReady)
-                    StackStatusRow(title: "Recall Runtime", detail: stagedRuntimeReady ? runtimeSummary : "Not staged yet", ok: stagedRuntimeReady)
-                    StackStatusRow(title: "Steam Compat Tool", detail: steamToolReady ? "Installed in Steam" : "Not installed yet", ok: steamToolReady)
-                    StackStatusRow(title: "Shader Optimizer", detail: helpersInstalled ? "Ready in background" : "Not installed yet", ok: helpersInstalled)
+                    StackStatusRow(
+                        title: "Rosetta 2",
+                        detail: rosettaInstalled ? "Verified (x86_64)" : "Needed for Windows games on Apple Silicon",
+                        ok: rosettaInstalled,
+                        actionTitle: rosettaInstalled ? nil : "Install",
+                        action: onInstallRosetta
+                    )
+                    StackStatusRow(
+                        title: "Steam",
+                        detail: steamPath ?? "Install Steam in Applications first",
+                        ok: steamInstalled
+                    )
+                    StackStatusRow(
+                        title: "NotProton Bridge",
+                        detail: notProtonReady ? notProtonSupportPath : "Open NotProton and click Install first",
+                        ok: notProtonReady,
+                        actionTitle: notProtonReady ? nil : "Open NotProton",
+                        action: onOpenNotProton
+                    )
+                    StackStatusRow(
+                        title: "Recall Runtime",
+                        detail: stagedRuntimeReady ? runtimeSummary : "Not staged yet",
+                        ok: stagedRuntimeReady
+                    )
+                    StackStatusRow(
+                        title: "Steam Compat Tool",
+                        detail: steamToolReady ? steamToolPath : "Not installed yet",
+                        ok: steamToolReady
+                    )
+                    StackStatusRow(
+                        title: "Shader Optimizer",
+                        detail: helpersInstalled ? "Ready in background" : "Not installed yet",
+                        ok: helpersInstalled
+                    )
                 }
 
                 Divider()

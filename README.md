@@ -22,9 +22,9 @@ Use [Recall](https://github.com/AsherJN/recall)'s patched Wine + DXMT runtime as
 
 1. Open `build/NotRecall.app` (or drag it to `/Applications` from `NotRecall-<version>.dmg`).
 2. In **Overview**, check your live prerequisites, system health, and Overwatch status — any missing prerequisites (Rosetta 2, Steam, NotProton bridge) are flagged with direct actions.
-3. Click **Download & Install** (or **Install NotRecall** if a local Recall copy is detected) to stage the runtime, shader helpers, Steam compatibility tool, and NotProton Compatibility UI plugin. For custom sources or **Dry Run**, open **Setup & Runtime** (`⌘3`).
+3. Click **Download & Install** (or **Install NotRecall** if a local Recall copy is detected) to stage the runtime, shader helpers, Steam compatibility tool, and NotProton Compatibility UI plugin. Use the **Recall Runtime & Installation** card on **Overview** for custom sources, **Update Runtime Only**, **Dry Run**, or **Uninstall…**.
 4. Click **Set Up in Steam** on the Overwatch hero card to configure Overwatch automatically, or right-click any DirectX 10/11 Windows game in Steam → **Properties → Compatibility** → enable **Force the use of a specific Steam Play compatibility tool** → select **NotRecall (Recall Wine + DXMT)**.
-5. For High-Precision raw HID mouse input, use **Show Steam** and **Input Monitoring…** in **Quick Controls & Recovery** to add `Steam.app` in **System Settings → Privacy & Security → Input Monitoring**.
+5. Configure per-game graphics, mouse, system, and diagnostic options directly in Steam’s **Properties → Compatibility** tab. For High-Precision raw HID mouse input, use **Show Steam** and **Input Monitoring…** in **Recovery & Input** to add `Steam.app` in **System Settings → Privacy & Security → Input Monitoring**.
 
 ### Using the CLI (`Makefile` / `scripts/install.sh`)
 
@@ -47,11 +47,9 @@ make uninstall
 
 ## `NotRecall.app` Features
 
-- **Overview (`⌘1`):** Player-first dashboard showing Overwatch readiness with direct **Play Overwatch** / **Set Up in Steam** and **Highlights** actions, live metric tiles (**System Health**, **Recall Runtime**, **Shader Cache**), contextual warnings (Low Power Mode, thermals, memory pressure, recent GPU hangs, Recall updates), **Quick Controls & Recovery** (MetalFX & Metal HUD toggles, High-Precision Mouse, **Reset Display Settings**, **Restart Steam**, **Force Quit Overwatch**), and a live **Stack & Shaders** snapshot with direct **Optimize Now** and **Rebuild** buttons.
-- **Game Settings (`⌘2`):** Native controls for MetalFX Upscaling, Sharpening, Metal Performance HUD, Mouse Mode & Polling Limit, Frame Pacing, FPS Limit, Shader Memory, Game Mode, MSync, and diagnostic logging—saved to `~/Library/Application Support/notrecall/settings.env` and loaded automatically by `compat/run`.
-- **Setup & Runtime (`⌘3`):** Full compatibility stack checklist, custom Recall runtime source picker (`Choose…` / `Reset` for `.dmg`, `Recall.app`, `.tar.gz`, or unpacked folders), **Install / Update**, **Update Runtime Only**, **Dry Run**, **Restart Steam**, and **Uninstall…**.
-- **Shaders (`⌘4`):** Scans all Steam libraries from `libraryfolders.vdf` (including external SSDs), resolves game titles from `appmanifest_<appid>.acf`, tracks live background precompilation progress and post-macOS-update optimization status, and provides per-game **Optimize Now**, **Rebuild Shaders**, and **Clear Cache**.
-- **Logs (`⌘5`):** Displays **Dry Run** / installer script output as well as the latest `notrecall-run.log` across all Steam libraries with the resolved game title and one-click **Copy Diagnostics** (`⇧⌘C`).
+- **Overview (`⌘1`):** Dashboard showing Overwatch readiness with direct **Play Overwatch** / **Set Up in Steam** and **Highlights** actions, live metric tiles (**System Health**, **Recall Runtime**, **Shader Cache**), contextual warnings (Low Power Mode, thermals, memory pressure, recent GPU hangs, Recall updates), **Recall Runtime & Installation** (`Choose…` / `Reset` local runtime source, **Install / Update**, **Update Runtime Only**, **Dry Run**, **Uninstall…**), **Recovery & Input** (High-Precision Mouse permission helpers, **Reset Display Settings**, **Restart Steam**, **Force Quit Overwatch**), and a live **Stack & Shaders** checklist with direct **Optimize Now** and **Rebuild** buttons.
+- **Shaders (`⌘2`):** Scans all Steam libraries from `libraryfolders.vdf` (including external SSDs), resolves game titles from `appmanifest_<appid>.acf`, tracks live background precompilation progress and post-macOS-update optimization status, and provides per-game **Optimize Now**, **Rebuild Shaders**, and **Clear Cache**.
+- **Logs (`⌘3`):** Displays **Dry Run** / installer script output as well as the latest `notrecall-run.log` across all Steam libraries with the resolved game title and one-click **Copy Diagnostics** (`⇧⌘C`).
 
 ## Building from Source
 

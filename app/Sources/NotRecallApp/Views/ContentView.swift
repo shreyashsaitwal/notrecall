@@ -116,6 +116,14 @@ struct ContentView: View {
         } message: {
             Text("Deletes saved shaders (\(state.pendingClearShaderEntry?.formattedSize ?? "")). Your next few matches will stutter while your Mac relearns them. Your game files and settings stay as they are.")
         }
+        .alert("Uninstall NotRecall?", isPresented: $state.confirmUninstall) {
+            Button("Cancel", role: .cancel) {}
+            Button("Uninstall", role: .destructive) {
+                Task { await state.runProjectScript("scripts/uninstall.sh") }
+            }
+        } message: {
+            Text("This removes NotRecall’s Steam compatibility tool, staged runtime, settings, and downloaded Recall cache. Your Steam games and saved highlights stay untouched.")
+        }
         .task(id: state.anyShaderCompiling) {
             guard state.anyShaderCompiling else { return }
             while !Task.isCancelled {
@@ -184,7 +192,7 @@ struct SidebarRow: View {
         HStack(spacing: 8) {
             Label(section.title, systemImage: section.symbol)
             Spacer(minLength: 4)
-            if section == .setup && setupNeedsAttention {
+            if section == .overview && setupNeedsAttention {
                 Circle()
                     .fill(NotRecallTheme.warning)
                     .frame(width: 7, height: 7)
@@ -251,10 +259,6 @@ struct DetailContentRouter: View {
         switch state.selectedSection {
         case .overview:
             OverviewView(state: state)
-        case .settings:
-            GameSettingsView(state: state)
-        case .setup:
-            SetupView(state: state)
         case .shaders:
             ShadersView(state: state)
         case .logs:

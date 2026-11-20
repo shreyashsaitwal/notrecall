@@ -5,7 +5,7 @@
     "notrecall-proton"
     {
       "install_path" "."
-      "display_name" "NotRecall (Recall Wine + DXMT)"
+      "display_name" "NotRecall"
       "from_oslist" "windows"
       "to_oslist" "macos"
     }

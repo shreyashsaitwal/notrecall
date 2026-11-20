@@ -61,25 +61,15 @@ struct NotRecallApp: App {
                 }
                 .keyboardShortcut("1", modifiers: .command)
 
-                Button("Game Settings") {
-                    state.selectedSection = .settings
-                }
-                .keyboardShortcut("2", modifiers: .command)
-
-                Button("Setup & Runtime") {
-                    state.selectedSection = .setup
-                }
-                .keyboardShortcut("3", modifiers: .command)
-
                 Button("Shaders") {
                     state.selectedSection = .shaders
                 }
-                .keyboardShortcut("4", modifiers: .command)
+                .keyboardShortcut("2", modifiers: .command)
 
                 Button("Logs") {
                     state.selectedSection = .logs
                 }
-                .keyboardShortcut("5", modifiers: .command)
+                .keyboardShortcut("3", modifiers: .command)
 
                 Divider()
 
