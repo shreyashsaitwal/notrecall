@@ -268,7 +268,8 @@ struct ContentView: View {
     }
 
     private var shaderCachesTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let anyCompiling = state.shaderCaches.contains(where: \.isCompiling)
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Per-Game DXMT Shader Caches")
@@ -288,33 +289,82 @@ struct ContentView: View {
                 )
             } else {
                 List(state.shaderCaches) { entry in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(entry.displayTitle).font(.headline)
-                                if entry.rebuildPending {
-                                    Text("Rebuild Queued")
-                                        .font(.caption2.weight(.medium))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.orange.opacity(0.2))
-                                        .clipShape(Capsule())
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(entry.displayTitle).font(.headline)
+                                    if entry.isCompiling {
+                                        Text("Compiling")
+                                            .font(.caption2.weight(.medium))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.blue.opacity(0.2))
+                                            .clipShape(Capsule())
+                                    }
+                                    if entry.needsMacOSOptimization && !entry.isCompiling {
+                                        Text("macOS Updated")
+                                            .font(.caption2.weight(.medium))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.orange.opacity(0.2))
+                                            .clipShape(Capsule())
+                                    }
+                                    if entry.rebuildPending {
+                                        Text("Rebuild Queued")
+                                            .font(.caption2.weight(.medium))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.orange.opacity(0.2))
+                                            .clipShape(Capsule())
+                                    }
+                                }
+                                Text("AppID \(entry.appID) • \(entry.archiveCount) .metallib archive(s) • \(entry.formattedSize)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Optimize Now") {
+                                Task { await state.optimizeShadersNow(entry) }
+                            }
+                            .disabled(entry.isCompiling || !state.helpersInstalled)
+                            Button("Rebuild Shaders") {
+                                Task { await state.requestRebuildShaders(entry) }
+                            }
+                            .disabled(entry.rebuildPending || entry.isCompiling)
+                            Button("Clear Cache", role: .destructive) {
+                                Task { await state.clearShaderCache(entry) }
+                            }
+                            .disabled(entry.isCompiling)
+                        }
+                        if entry.isCompiling {
+                            if let ready = entry.preparingReady, let learned = entry.preparingLearned, learned > 0 {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    ProgressView(value: Double(min(ready, learned)), total: Double(learned))
+                                    Text("Compiled \(ready) of \(learned) learned shaders in background…")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Optimizing shader cache in background…")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
-                            Text("AppID \(entry.appID) • \(entry.archiveCount) .metallib archive(s) • \(entry.formattedSize)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Rebuild Shaders") {
-                            Task { await state.requestRebuildShaders(entry) }
-                        }
-                        .disabled(entry.rebuildPending)
-                        Button("Clear Cache", role: .destructive) {
-                            Task { await state.clearShaderCache(entry) }
                         }
                     }
+                    .padding(.vertical, 2)
                 }
+            }
+        }
+        .task(id: "\(state.selectedTab)-\(anyCompiling)") {
+            guard state.selectedTab == 1, anyCompiling else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if Task.isCancelled { break }
+                await state.refresh(preserveLog: true)
             }
         }
     }

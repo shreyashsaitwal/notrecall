@@ -10,6 +10,10 @@ struct ShaderCacheEntry: Identifiable, Hashable, Sendable {
     let sizeBytes: Int64
     let archiveCount: Int
     let rebuildPending: Bool
+    let isCompiling: Bool
+    let preparingReady: Int?
+    let preparingLearned: Int?
+    let needsMacOSOptimization: Bool
 
     var id: String { path.path }
 
@@ -309,9 +313,14 @@ final class AppState: ObservableObject {
     }
 
     func clearShaderCache(_ entry: ShaderCacheEntry) async {
+        let fm = FileManager.default
         do {
-            try FileManager.default.removeItem(at: entry.path)
-            statusMessage = "Cleared shader cache for \(entry.displayTitle)."
+            try fm.removeItem(at: entry.path)
+            if let metalCache = Self.gameAppMetalCacheURL(forAppID: entry.appID),
+               fm.fileExists(atPath: metalCache.path) {
+                try? fm.removeItem(at: metalCache)
+            }
+            statusMessage = "Cleared DXMT and Metal shader caches for \(entry.displayTitle)."
         } catch {
             statusMessage = "Failed to clear cache: \(error.localizedDescription)"
         }
@@ -328,6 +337,39 @@ final class AppState: ObservableObject {
         } catch {
             statusMessage = "Failed to queue shader rebuild: \(error.localizedDescription)"
         }
+        await refresh()
+    }
+
+    func optimizeShadersNow(_ entry: ShaderCacheEntry) async {
+        let hook = notRecallSupport.appending(path: "helpers/pipeline_hook.sh")
+        guard FileManager.default.isExecutableFile(atPath: hook.path) else {
+            statusMessage = "pipeline_hook.sh not installed — click Install / Update first."
+            return
+        }
+        let gameApp = notRecallSupport.appending(path: "launchers/\(entry.appID)/NotRecallGame.app")
+        let logFile = entry.path.deletingLastPathComponent().appending(path: "notrecall-run.log")
+        let args: [String] = [
+            hook.path, "post", entry.path.path,
+            FileManager.default.fileExists(atPath: gameApp.path) ? gameApp.path : "",
+            logFile.path
+        ]
+        let ok = await Task.detached { () -> Bool in
+            let proc = Process()
+            proc.executableURL = URL(filePath: "/bin/sh")
+            proc.arguments = args
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                return proc.terminationStatus == 0
+            } catch {
+                return false
+            }
+        }.value
+        statusMessage = ok
+            ? "Started background shader optimization for \(entry.displayTitle)."
+            : "Could not start background shader optimization for \(entry.displayTitle)."
         await refresh()
     }
 
@@ -601,6 +643,69 @@ final class AppState: ObservableObject {
         return names
     }
 
+    nonisolated private static func gameAppMetalCacheURL(forAppID appID: String) -> URL? {
+        guard !appID.isEmpty, appID.allSatisfy(\.isNumber) else { return nil }
+        var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard confstr(_CS_DARWIN_USER_CACHE_DIR, &buf, buf.count) > 0 else { return nil }
+        let root = URL(filePath: String(cString: buf))
+        return root.appending(path: "com.notrecall.game.\(appID)/com.apple.metal")
+    }
+
+    nonisolated private static func isPrecompileRunning(at cacheRoot: URL) -> Bool {
+        let pidFile = cacheRoot.appending(path: "precompile.pid")
+        guard let raw = try? String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+              let pid = Int32(raw), pid > 0, kill(pid, 0) == 0 else {
+            return false
+        }
+        let proc = Process()
+        proc.executableURL = URL(filePath: "/bin/ps")
+        proc.arguments = ["-p", String(pid), "-o", "args="]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            try? pipe.fileHandleForWriting.close()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            let args = String(decoding: data, as: UTF8.self)
+            return args.contains("portable-pipeline")
+        } catch {
+            return false
+        }
+    }
+
+    nonisolated private static func readPreparingProgress(at cacheRoot: URL) -> (Int, Int)? {
+        let url = cacheRoot.appending(path: "cache/preparing.json")
+        guard let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ready = json["ready"] as? Int,
+              let learned = json["learned"] as? Int, learned > 0 else {
+            return nil
+        }
+        return (ready, learned)
+    }
+
+    nonisolated private static func needsMacOSOptimization(at cacheRoot: URL) -> Bool {
+        let fm = FileManager.default
+        let currentOS = ProcessInfo.processInfo.operatingSystemVersionString
+        let optURL = cacheRoot.appending(path: "cache/optimized.json")
+        if let data = try? Data(contentsOf: optURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let macos = json["macos"] as? String, !macos.isEmpty {
+            return macos != currentOS
+        }
+        let pipelinesDir = cacheRoot.appending(path: "cache/pipelines")
+        if let dirs = try? fm.contentsOfDirectory(at: pipelinesDir, includingPropertiesForKeys: nil) {
+            for dir in dirs {
+                if fm.fileExists(atPath: dir.appending(path: "earlier-macos.json").path) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     nonisolated private static func scanShaderCaches(across libraries: [URL], appNames: [String: String]) -> [ShaderCacheEntry] {
         let fm = FileManager.default
         var result: [ShaderCacheEntry] = []
@@ -620,13 +725,20 @@ final class AppState: ObservableObject {
                 }
                 let appID = dir.lastPathComponent
                 let rebuildPending = fm.fileExists(atPath: cache.appending(path: "cache/rebuild-shaders").path)
+                let compiling = isPrecompileRunning(at: cache)
+                let progress = compiling ? readPreparingProgress(at: cache) : nil
+                let macOSStale = needsMacOSOptimization(at: cache)
                 result.append(ShaderCacheEntry(
                     appID: appID,
                     gameName: appNames[appID],
                     path: cache,
                     sizeBytes: totalBytes,
                     archiveCount: archives,
-                    rebuildPending: rebuildPending
+                    rebuildPending: rebuildPending,
+                    isCompiling: compiling,
+                    preparingReady: progress?.0,
+                    preparingLearned: progress?.1,
+                    needsMacOSOptimization: macOSStale
                 ))
             }
         }
