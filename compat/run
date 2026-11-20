@@ -195,6 +195,63 @@ ids_without() {
     | awk '$0 == "--" { s = 1; next } !s { b[$0]; next } $0 != "" && !($0 in b)'
 }
 
+# Emit registry entries to route Wine's default microphone to the Mac's built-in mic
+# when a Bluetooth headset is the macOS default input (prevents HFP audio drop).
+emit_bt_voice_reg() {
+  bt_uid=""
+  if [ "${NOTRECALL_BT_MIC_FIX:-1}" != "0" ]; then
+    if [ -n "${NOTRECALL_TEST_BT_MIC_UID:-}" ]; then
+      [ "$NOTRECALL_TEST_BT_MIC_UID" != "none" ] && bt_uid="$NOTRECALL_TEST_BT_MIC_UID"
+    elif [ -x "$nr_helpers/notrecall-sysinfo" ]; then
+      bt_uid=$("$nr_helpers/notrecall-sysinfo" bt-voice-uid 2>/dev/null || true)
+    fi
+  fi
+  if [ -n "$bt_uid" ] && [ -x /usr/bin/perl ]; then
+    /usr/bin/perl -MDigest::SHA=sha256 -e '
+      my ($user_reg, $uid) = @ARGV;
+      exit 1 if $uid !~ /^[A-Za-z0-9._:,-]{1,128}$/;
+      my @bytes;
+      if (-f $user_reg && (-s $user_reg) <= 8*1024*1024 && open my $fh, "<:raw", $user_reg) {
+        my $target = "[software\\\\wine\\\\drivers\\\\winecoreaudio.drv\\\\devices\\\\1," . lc($uid) . "]";
+        my $in_sec = 0;
+        while (my $line = <$fh>) {
+          $line =~ s/^\s+|\s+$//g;
+          if ($line =~ /^\[/) {
+            $in_sec = (index(lc($line), $target) == 0);
+            next;
+          }
+          if ($in_sec && $line =~ /^"guid"=hex:([0-9a-fA-F,]+)$/) {
+            my @parts = split(/,/, $1);
+            if (@parts == 16 && !grep { $_ !~ /^[0-9a-fA-F]{2}$/ } @parts) {
+              @bytes = map { hex($_) } @parts;
+              last;
+            }
+          }
+        }
+        close $fh;
+      }
+      if (@bytes != 16) {
+        @bytes = unpack("C16", substr(sha256("notrecall-bt-mic|" . $uid), 0, 16));
+      }
+      my $hex = join(",", map { sprintf("%02x", $_) } @bytes);
+      my $d1 = $bytes[0] | ($bytes[1] << 8) | ($bytes[2] << 16) | ($bytes[3] << 24);
+      my $d2 = $bytes[4] | ($bytes[5] << 8);
+      my $d3 = $bytes[6] | ($bytes[7] << 8);
+      my $ep = sprintf("{0.0.1.00000000}.{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+        $d1, $d2, $d3, @bytes[8..15]);
+      print "[HKEY_CURRENT_USER\\Software\\Wine\\Drivers\\winecoreaudio.drv\\devices\\1,$uid]\r\n";
+      print "\"guid\"=hex:$hex\r\n\r\n";
+      print "[HKEY_CURRENT_USER\\Software\\Wine\\Drivers\\winecoreaudio.drv]\r\n";
+      print "\"DefaultInput\"=\"$ep\"\r\n";
+      print "\"DefaultVoiceInput\"=\"$ep\"\r\n\r\n";
+    ' "$WINEPREFIX/user.reg" "$bt_uid" 2>/dev/null && return 0
+  fi
+  printf '%s\r\n' \
+    '[HKEY_CURRENT_USER\Software\Wine\Drivers\winecoreaudio.drv]' \
+    '"DefaultInput"=-' \
+    '"DefaultVoiceInput"=-' ''
+}
+
 import_prefix_settings() {
   [ -f "$WINEPREFIX/system.reg" ] || return 0
   controllers_file="$STEAM_COMPAT_DATA_PATH/notrecall-hidden-controllers"
@@ -237,6 +294,8 @@ import_prefix_settings() {
       '"Mailers"="/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/open"' '' \
       '[HKEY_CURRENT_USER\Software\Wine\AppDefaults\Overwatch.exe\Mac Driver]' \
       '"LeftOptionIsAlt"="Y"' ''
+
+    emit_bt_voice_reg
 
     printf '%s\n' "$wanted" | while IFS= read -r cid; do
       [ -n "$cid" ] || continue
