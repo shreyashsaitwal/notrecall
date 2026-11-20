@@ -25,6 +25,13 @@ grep -q '"to_oslist" "macos"' "$PROJECT_DIR/compat/compatibilitytool.vdf"
 grep -q '"commandline" "/run %verb%"' "$PROJECT_DIR/compat/toolmanifest.vdf"
 echo "    OK: compatibilitytool.vdf & toolmanifest.vdf"
 
+echo "==> Checking NotProton plugin descriptor (50-notrecall.conf)"
+[ -f "$PROJECT_DIR/plugins/50-notrecall.conf" ]
+grep -Fq "[NOTPROTON_NOTRECALL_METALFX]" "$PROJECT_DIR/plugins/50-notrecall.conf"
+grep -Fq "hide_crossover = 1" "$PROJECT_DIR/plugins/50-notrecall.conf"
+grep -Fq "tools          = notrecall-proton*" "$PROJECT_DIR/plugins/50-notrecall.conf"
+echo "    OK: plugins/50-notrecall.conf present with hide_crossover = 1"
+
 echo "==> Running behavioral tests for compat/run (Overwatch defaults & env contract)"
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT
@@ -435,8 +442,35 @@ assert_env_absent "$cfg_hard_env" "UNSAFE_KEY"
 rm -f "$fake_home/Library/Application Support/notrecall/settings.env"
 echo "    OK: settings.env global/per-game loading, CRLF/allowlist hardening, and env override precedence"
 
+# Case 10: Adopted NotProton plugin env vars (NOTPROTON_NOTRECALL_* & NOTPROTON_ENV_*) override settings.env,
+# while explicit raw env vars still take highest precedence.
+cat > "$fake_home/Library/Application Support/notrecall/settings.env" <<'CFG'
+NOTRECALL_MOUSE_MODE=classic
+NOTRECALL_FPS_LIMIT=60
+CFG
+np_env="$test_root/np_plugin.env"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$cfg_data" \
+  NOTPROTON_NOTRECALL_METALFX=1 \
+  NOTPROTON_NOTRECALL_MTL_HUD=1 \
+  NOTPROTON_NOTRECALL_DISABLE_GAMEMODE=1 \
+  NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS=high \
+  NOTPROTON_ENV_NOTRECALL_MOUSE_MODE=hid \
+  NOTPROTON_ENV_NOTRECALL_FPS_LIMIT=144 \
+  NOTRECALL_FPS_LIMIT=120 \
+  TEST_ENV_OUT="$np_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
 
-
+assert_env "$np_env" "DXMT_ENABLE_NVEXT=1"
+assert_env "$np_env" "MTL_HUD_ENABLED=1"
+assert_env "$np_env" "NOTRECALL_GAME_MODE=0"
+assert_env "$np_env" "WINEMAC_INPUT_VARIANT=precise"
+assert_env "$np_env" "WINEMAC_RAW_SOURCE=hid"
+grep -Fq "d3d11.metalfxSharpness=0.8" "$np_env"
+grep -Fq "d3d11.preferredMaxFrameRate=120" "$np_env"
+rm -f "$fake_home/Library/Application Support/notrecall/settings.env"
+echo "    OK: NotProton adopted plugin env translation and precedence"
 
 echo "==> Testing scripts/install.sh --dry-run against a mock Recall.app bundle"
 mock_recall_dir=$(mktemp -d)

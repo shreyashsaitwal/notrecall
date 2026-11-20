@@ -8,8 +8,8 @@ struct GameSettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 InlineBanner(
                     symbol: "checkmark.seal.fill",
-                    title: "Applied automatically on every Steam launch",
-                    message: "Leave Steam’s Launch Options blank to avoid macOS Steam OS Error 260. If you ever pass custom options in Steam, use /usr/bin/env KEY=VAL %command%.",
+                    title: "Global defaults — per-game overrides also work in Steam",
+                    message: "You can toggle per-game options directly in Steam’s Properties › Compatibility tab (or pass KEY=VAL %command% in Launch Options). Settings here act as global defaults.",
                     tint: NotRecallTheme.brand
                 )
 

@@ -15,7 +15,7 @@ NP_SUPPORT="${NOTPROTON_SUPPORT:-$HOME/Library/Application Support/notproton}"
 NR_SUPPORT="$HOME/Library/Application Support/notrecall"
 STEAM_COMPAT_DIR="$HOME/Library/Application Support/Steam/compatibilitytools.d"
 TOOL_DST="$STEAM_COMPAT_DIR/notrecall-proton"
-LEGACY_PLUGIN_DST="$NP_SUPPORT/plugins/50-notrecall.conf"
+PLUGIN_DST="$NP_SUPPORT/plugins/50-notrecall.conf"
 DRY_RUN=0
 RUNTIME_ONLY=0
 FORCE_PATCH_NTDLL=0
@@ -436,19 +436,45 @@ if [ -n "$sysinfo_bin" ]; then
   run_cmd chmod 755 "$NR_SUPPORT/helpers/notrecall-sysinfo"
 fi
 
-# 6. Install Steam compatibility tool bundle and remove any legacy NotProton plugin.
+# 6. Install Steam compatibility tool bundle, adopt into stock NotProton, and install plugin.
 echo "==> Installing Steam compatibility tool to: $TOOL_DST"
 run_cmd cp -f "$PROJECT_DIR/compat/compatibilitytool.vdf" "$TOOL_DST/compatibilitytool.vdf"
 run_cmd cp -f "$PROJECT_DIR/compat/toolmanifest.vdf" "$TOOL_DST/toolmanifest.vdf"
 run_cmd cp -f "$PROJECT_DIR/compat/run" "$TOOL_DST/run"
 run_cmd chmod 755 "$TOOL_DST/run"
 
-if [ -f "$LEGACY_PLUGIN_DST" ]; then
-  echo "==> Removing legacy NotProton plugin: $LEGACY_PLUGIN_DST"
-  run_cmd rm -f "$LEGACY_PLUGIN_DST"
+# Write NotProton adoption metadata (build + flavor) so NotProton's hook_launch.c
+# wraps notrecall-proton launches in /bin/sh -c, enabling Steam Compatibility UI
+# options and custom KEY=VAL %command% launch options without macOS OS Error 260.
+adopt_build=""
+if [ -f "$NP_SUPPORT/tools" ]; then
+  adopt_build=$(awk -F '	' '
+    NF >= 3 && $2 != "" {
+      if (first == "") first = $2
+      if ($3 == "rosetta" && rosetta == "") rosetta = $2
+    }
+    END { print (rosetta != "" ? rosetta : first) }
+  ' "$NP_SUPPORT/tools" 2>/dev/null || true)
+fi
+if [ -n "$adopt_build" ]; then
+  echo "==> Adopting notrecall-proton into NotProton (build $adopt_build, rosetta)"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] write $TOOL_DST/build ($adopt_build) and $TOOL_DST/flavor (rosetta)"
+  else
+    printf '%s\n' "$adopt_build" > "$TOOL_DST/build.tmp.$$" && mv -f "$TOOL_DST/build.tmp.$$" "$TOOL_DST/build"
+    printf 'rosetta\n' > "$TOOL_DST/flavor.tmp.$$" && mv -f "$TOOL_DST/flavor.tmp.$$" "$TOOL_DST/flavor"
+  fi
+else
+  echo "    Note: $NP_SUPPORT/tools not found yet; compat/run will sync adoption metadata once NotProton is installed."
+fi
+
+if [ -f "$PROJECT_DIR/plugins/50-notrecall.conf" ]; then
+  echo "==> Installing NotProton Steam Compatibility plugin to: $PLUGIN_DST"
+  run_cmd mkdir -p "$NP_SUPPORT/plugins"
+  run_cmd cp -f "$PROJECT_DIR/plugins/50-notrecall.conf" "$PLUGIN_DST"
 fi
 
 echo ""
 echo "Done!${RECALL_APP_VERSION:+ Installed Recall $RECALL_APP_VERSION runtime.} Restart Steam, then select 'NotRecall (Recall Wine + DXMT)' under:"
 echo "  Game -> Properties -> Compatibility -> Force the use of a specific Steam Play compatibility tool"
-echo "Configure MetalFX, Metal HUD, mouse mode, and other options directly in NotRecall.app (leave Steam Launch Options blank)."
+echo "Configure MetalFX, Metal HUD, mouse mode, and other options directly in Steam's Compatibility tab (or set global defaults in NotRecall.app)."

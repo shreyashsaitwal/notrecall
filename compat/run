@@ -93,8 +93,63 @@ case "$verb" in
     ;;
 esac
 
+# Keep notrecall-proton adopted by stock NotProton (build + flavor files) so
+# NotProton's hook_launch.c wraps launches in /bin/sh -c across CrossOver updates.
+sync_notproton_adoption() {
+  [ -n "$tool_dir" ] && [ -w "$tool_dir" ] && [ -f "$np_support/tools" ] || return 0
+  cur_build=""
+  [ -f "$tool_dir/build" ] && cur_build=$(head -n 1 "$tool_dir/build" 2>/dev/null | tr -d ' \t\r\n')
+  want_build=$(awk -F '	' -v cur="$cur_build" '
+    NF >= 3 && $2 != "" {
+      if (cur != "" && $2 == cur) { matched = cur; exit }
+      if (first == "") first = $2
+      if ($3 == "rosetta" && rosetta == "") rosetta = $2
+    }
+    END {
+      if (matched != "") print matched
+      else if (rosetta != "") print rosetta
+      else if (first != "") print first
+    }
+  ' "$np_support/tools" 2>/dev/null || true)
+  [ -n "$want_build" ] || return 0
+  if [ "$cur_build" != "$want_build" ]; then
+    printf '%s\n' "$want_build" > "$tool_dir/build.tmp.$$" 2>/dev/null && \
+      mv -f "$tool_dir/build.tmp.$$" "$tool_dir/build" 2>/dev/null || rm -f "$tool_dir/build.tmp.$$"
+  fi
+  if [ ! -f "$tool_dir/flavor" ]; then
+    printf 'rosetta\n' > "$tool_dir/flavor.tmp.$$" 2>/dev/null && \
+      mv -f "$tool_dir/flavor.tmp.$$" "$tool_dir/flavor" 2>/dev/null || rm -f "$tool_dir/flavor.tmp.$$"
+  fi
+}
+sync_notproton_adoption
+
+# Translate Steam Compatibility UI plugin vars (set by NotProton's 50-notrecall.conf
+# when notrecall-proton is adopted) without clobbering explicit raw env overrides.
+load_notproton_plugin_env() {
+  [ "${NOTPROTON_NOTRECALL_METALFX:-}" = "1" ]           && [ -z "${DXMT_ENABLE_NVEXT+1}" ]          && export DXMT_ENABLE_NVEXT=1
+  [ "${NOTPROTON_NOTRECALL_MTL_HUD:-}" = "1" ]           && [ -z "${MTL_HUD_ENABLED+1}" ]            && export MTL_HUD_ENABLED=1
+  [ "${NOTPROTON_NOTRECALL_FAST_KEYS:-}" = "1" ]         && [ -z "${WINEMAC_APPKIT_UPDATE_CYCLE+1}" ] && export WINEMAC_APPKIT_UPDATE_CYCLE=0
+  [ "${NOTPROTON_NOTRECALL_PROXY_AUTO_DETECT:-}" = "1" ] && [ -z "${NOTRECALL_PROXY_AUTO_DETECT+1}" ] && export NOTRECALL_PROXY_AUTO_DETECT=1
+  [ "${NOTPROTON_NOTRECALL_DISABLE_GAMEMODE:-}" = "1" ]  && [ -z "${NOTRECALL_GAME_MODE+1}" ]        && export NOTRECALL_GAME_MODE=0
+  [ "${NOTPROTON_NOTRECALL_NO_PRECOMPILE:-}" = "1" ]     && [ -z "${NOTRECALL_SKIP_PRECOMPILE+1}" ]  && export NOTRECALL_SKIP_PRECOMPILE=1
+  [ "${NOTPROTON_NOTRECALL_RAW_CONTROLLERS:-}" = "1" ]   && [ -z "${NOTRECALL_RAW_CONTROLLERS+1}" ]  && export NOTRECALL_RAW_CONTROLLERS=1
+  [ "${NOTPROTON_NOTRECALL_DISABLE_MSYNC:-}" = "1" ]     && [ -z "${WINEMSYNC+1}" ]                  && export WINEMSYNC=0
+  [ "${NOTPROTON_NOTRECALL_LOG_CRASHES:-}" = "1" ]       && [ -z "${NOTRECALL_LOG_CRASHES+1}" ]      && export NOTRECALL_LOG_CRASHES=1
+  [ "${NOTPROTON_NOTRECALL_LOG_GRAPHICS:-}" = "1" ]      && [ -z "${NOTRECALL_LOG_GRAPHICS+1}" ]     && export NOTRECALL_LOG_GRAPHICS=1
+  [ "${NOTPROTON_NOTRECALL_LOG_MOUSE:-}" = "1" ]         && [ -z "${NOTRECALL_LOG_MOUSE+1}" ]        && export NOTRECALL_LOG_MOUSE=1
+
+  [ -n "${NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS:-}" ] && [ -z "${NOTRECALL_METALFX_SHARPNESS+1}" ] && export NOTRECALL_METALFX_SHARPNESS="$NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS"
+  [ -n "${NOTPROTON_ENV_NOTRECALL_MOUSE_MODE:-}" ]        && [ -z "${NOTRECALL_MOUSE_MODE+1}" ]        && export NOTRECALL_MOUSE_MODE="$NOTPROTON_ENV_NOTRECALL_MOUSE_MODE"
+  [ -n "${NOTPROTON_ENV_NOTRECALL_MOUSE_RATE:-}" ]        && [ -z "${NOTRECALL_MOUSE_RATE+1}" ]        && export NOTRECALL_MOUSE_RATE="$NOTPROTON_ENV_NOTRECALL_MOUSE_RATE"
+  [ -n "${NOTPROTON_ENV_NOTRECALL_FRAME_PACING:-}" ]      && [ -z "${NOTRECALL_FRAME_PACING+1}" ]      && export NOTRECALL_FRAME_PACING="$NOTPROTON_ENV_NOTRECALL_FRAME_PACING"
+  [ -n "${NOTPROTON_ENV_NOTRECALL_FPS_LIMIT:-}" ]         && [ -z "${NOTRECALL_FPS_LIMIT+1}" ]         && export NOTRECALL_FPS_LIMIT="$NOTPROTON_ENV_NOTRECALL_FPS_LIMIT"
+  [ -n "${NOTPROTON_ENV_NOTRECALL_SHADER_MEM_MB:-}" ]     && [ -z "${NOTRECALL_SHADER_MEM_MB+1}" ]     && export NOTRECALL_SHADER_MEM_MB="$NOTPROTON_ENV_NOTRECALL_SHADER_MEM_MB"
+  return 0
+}
+load_notproton_plugin_env
+
 # Load NotRecall's saved settings (per-game override first, then global) without
-# clobbering any env vars explicitly passed in Steam Launch Options.
+# clobbering any env vars explicitly passed in Steam Launch Options or Compatibility UI.
 load_settings_file() {
   cfg="$1"
   [ -f "$cfg" ] && [ ! -L "$cfg" ] || return 0

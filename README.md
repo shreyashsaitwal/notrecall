@@ -8,7 +8,7 @@ Use [Recall](https://github.com/AsherJN/recall)'s patched Wine + DXMT runtime as
 - **100% of Recall's runtime, including `ntdll.so`:** Running as a standalone tool in `~/Library/Application Support/Steam/compatibilitytools.d/notrecall-proton` avoids NotProton's variant `ntdll.so` block — preserving Recall's `virtual_mutex` `dlopen` freeze fix and `msync` thread-exit fd-close fix alongside all DXMT, MetalFX, raw HID mouse, audio hotplug, and Media Foundation patches.
 - **Lightweight macOS `.app` bundle with verified Recall downloads:** `NotRecall.app` bundles `compat/`, `notrecall-sysinfo`, and installer scripts, and downloads official signed [Recall](https://github.com/AsherJN/recall/releases) `.dmg` releases from GitHub (verifying SHA-256 and code signature) — or lets you point to a local `Recall.app` / `.dmg` / `runtime.tar.gz`.
 - **Per-game offline shader precompilation:** Consolidates reboot-shifted `MTLDevice.registryID` folders and warms Metal's cache before launch, then compiles learned shaders into `.metallib` archives in the background after each session, isolated per Steam AppID.
-- **Native Game Settings without Steam Launch Options:** Configure MetalFX/DLSS, sharpening, Metal Performance HUD, raw HID mouse mode, mouse polling rate cap, frame pacing, FPS limit, shader memory budget, Game Mode, MSync, and diagnostic logging directly in `NotRecall.app` (`settings.env`)—so Steam Launch Options stay blank and never hit macOS Steam OS Error 260.
+- **Native Steam Compatibility UI & custom Launch Options without OS Error 260:** `notrecall-proton` is adopted by stock NotProton via `build`/`flavor` metadata and `plugins/50-notrecall.conf` (`hide_crossover = 1`), so NotProton's shell launch hook wraps launches cleanly—letting you toggle MetalFX/DLSS, sharpening, Metal Performance HUD, raw HID mouse mode, mouse polling cap, frame pacing, FPS limit, shader memory, Game Mode, MSync, and logging directly in Steam → **Properties → Compatibility** (or pass standard `KEY=VAL %command%` Launch Options), with `NotRecall.app` (`settings.env`) serving as optional global defaults.
 
 ## Prerequisites
 
@@ -22,7 +22,7 @@ Use [Recall](https://github.com/AsherJN/recall)'s patched Wine + DXMT runtime as
 
 1. Open `build/NotRecall.app` (or drag it to `/Applications` from `NotRecall-<version>.dmg`).
 2. In **Overview**, check your live prerequisites, system health, and Overwatch status — any missing prerequisites (Rosetta 2, Steam, NotProton bridge) are flagged with direct actions.
-3. Click **Download & Install** (or **Install NotRecall** if a local Recall copy is detected) to stage the runtime, shader helpers, and Steam compatibility tool. For custom sources or **Dry Run**, open **Setup & Runtime** (`⌘3`).
+3. Click **Download & Install** (or **Install NotRecall** if a local Recall copy is detected) to stage the runtime, shader helpers, Steam compatibility tool, and NotProton Compatibility UI plugin. For custom sources or **Dry Run**, open **Setup & Runtime** (`⌘3`).
 4. Click **Set Up in Steam** on the Overwatch hero card to configure Overwatch automatically, or right-click any DirectX 10/11 Windows game in Steam → **Properties → Compatibility** → enable **Force the use of a specific Steam Play compatibility tool** → select **NotRecall (Recall Wine + DXMT)**.
 5. For High-Precision raw HID mouse input, use **Show Steam** and **Input Monitoring…** in **Quick Controls & Recovery** to add `Steam.app` in **System Settings → Privacy & Security → Input Monitoring**.
 

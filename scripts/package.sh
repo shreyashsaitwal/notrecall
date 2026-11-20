@@ -76,7 +76,7 @@ echo "==> Assembling $APP_BUNDLE"
 rm -rf "$APP_BUNDLE"
 MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
 RES_DIR="$APP_BUNDLE/Contents/Resources"
-mkdir -p "$MACOS_DIR" "$RES_DIR/compat" "$RES_DIR/scripts" "$RES_DIR/helpers"
+mkdir -p "$MACOS_DIR" "$RES_DIR/compat" "$RES_DIR/plugins" "$RES_DIR/scripts" "$RES_DIR/helpers"
 
 cp -f "$SWIFT_BIN_DIR/NotRecallApp" "$MACOS_DIR/NotRecallApp"
 chmod 755 "$MACOS_DIR/NotRecallApp"
@@ -86,6 +86,10 @@ cp -f "$PROJECT_DIR/compat/compatibilitytool.vdf" "$RES_DIR/compat/"
 cp -f "$PROJECT_DIR/compat/toolmanifest.vdf"      "$RES_DIR/compat/"
 cp -f "$PROJECT_DIR/compat/run"                   "$RES_DIR/compat/"
 chmod 755 "$RES_DIR/compat/run"
+
+if [ -f "$PROJECT_DIR/plugins/50-notrecall.conf" ]; then
+  cp -f "$PROJECT_DIR/plugins/50-notrecall.conf" "$RES_DIR/plugins/50-notrecall.conf"
+fi
 
 for s in install.sh uninstall.sh pipeline_hook.sh; do
   cp -f "$PROJECT_DIR/scripts/$s" "$RES_DIR/scripts/$s"
