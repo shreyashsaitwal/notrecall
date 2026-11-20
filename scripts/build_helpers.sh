@@ -38,6 +38,18 @@ xcrun swiftc -O "$TMP_SWIFT" -o "$OUT_DIR/portable-pipeline" \
 chmod 755 "$OUT_DIR/portable-pipeline"
 echo "    OK: $OUT_DIR/portable-pipeline"
 
+if [ -f "$PROJECT_DIR/scripts/notrecall_sysinfo.m" ]; then
+  echo "==> Compiling notrecall-sysinfo -> $OUT_DIR/notrecall-sysinfo"
+  /usr/bin/clang -arch arm64 -mmacosx-version-min=14.0 -fobjc-arc -O2 \
+    "$PROJECT_DIR/scripts/notrecall_sysinfo.m" \
+    -framework Foundation -framework CoreGraphics -framework CoreAudio \
+    -framework IOKit -framework Metal \
+    -o "$OUT_DIR/notrecall-sysinfo"
+  /usr/bin/strip -S -x "$OUT_DIR/notrecall-sysinfo" 2>/dev/null || true
+  chmod 755 "$OUT_DIR/notrecall-sysinfo"
+  echo "    OK: $OUT_DIR/notrecall-sysinfo"
+fi
+
 NATIVE_DIR="$DXMT_SOURCE/src/winemetal/unix"
 if [ -f "$NATIVE_DIR/pipeline_cache.c" ] && [ -f "$NATIVE_DIR/pipeline_recipe.c" ]; then
   echo "==> Compiling libpipeline_prepare.dylib, pipeline-prepare, and pipeline-warm"

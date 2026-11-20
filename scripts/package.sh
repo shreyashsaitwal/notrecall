@@ -74,7 +74,7 @@ done
 
 # Embed built shader pipeline helpers if present.
 if [ -d "$OUT_DIR/helpers" ]; then
-  for h in portable-pipeline pipeline-prepare pipeline-warm libpipeline_prepare.dylib; do
+  for h in portable-pipeline pipeline-prepare pipeline-warm libpipeline_prepare.dylib notrecall-sysinfo; do
     if [ -f "$OUT_DIR/helpers/$h" ]; then
       cp -f "$OUT_DIR/helpers/$h" "$RES_DIR/helpers/$h"
       chmod 755 "$RES_DIR/helpers/$h"
@@ -141,7 +141,7 @@ sign_item() {
 }
 
 # Sign nested Mach-O helpers inside-out before signing the app bundle (avoid deprecated --deep).
-for h in libpipeline_prepare.dylib pipeline-prepare pipeline-warm portable-pipeline; do
+for h in libpipeline_prepare.dylib pipeline-prepare pipeline-warm portable-pipeline notrecall-sysinfo; do
   if [ -f "$RES_DIR/helpers/$h" ]; then
     sign_item "$RES_DIR/helpers/$h"
   fi

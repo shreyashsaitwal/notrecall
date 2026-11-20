@@ -272,14 +272,14 @@ run_cmd cp -f "$PROJECT_DIR/scripts/pipeline_hook.sh" "$NR_SUPPORT/helpers/pipel
 run_cmd chmod 755 "$NR_SUPPORT/helpers/pipeline_hook.sh"
 staged_helpers=0
 missing_helpers=""
-for bin in portable-pipeline pipeline-prepare pipeline-warm libpipeline_prepare.dylib; do
+for bin in portable-pipeline pipeline-prepare pipeline-warm libpipeline_prepare.dylib notrecall-sysinfo; do
   found_bin=$(find_helper_bin "$bin" || true)
   if [ -n "$found_bin" ]; then
     echo "    Staging $bin from: $found_bin"
     run_cmd cp -f "$found_bin" "$NR_SUPPORT/helpers/$bin"
     run_cmd chmod 755 "$NR_SUPPORT/helpers/$bin"
     staged_helpers=$((staged_helpers + 1))
-  elif [ "$bin" != "libpipeline_prepare.dylib" ]; then
+  elif [ "$bin" != "libpipeline_prepare.dylib" ] && [ "$bin" != "notrecall-sysinfo" ]; then
     missing_helpers="$missing_helpers $bin"
   fi
 done

@@ -213,6 +213,13 @@ import_prefix_settings() {
   fi
   removed=$(ids_without "$owned" "$wanted")
 
+  retina_mode="Y"
+  display_scale="${NOTRECALL_TEST_DISPLAY_SCALE:-}"
+  if [ -z "$display_scale" ] && [ -x "$nr_helpers/notrecall-sysinfo" ]; then
+    display_scale=$("$nr_helpers/notrecall-sysinfo" display-scale 2>/dev/null || true)
+  fi
+  [ "$display_scale" = "1" ] && retina_mode="N"
+
   reg_file=$(mktemp "$WINEPREFIX/drive_c/notrecall-settings.XXXXXX" 2>/dev/null) || return 0
   {
     printf '%s\r\n' \
@@ -223,6 +230,8 @@ import_prefix_settings() {
       '[HKEY_LOCAL_MACHINE\Software\Classes\steam]' '"URL Protocol"=""' '' \
       '[HKEY_LOCAL_MACHINE\Software\Classes\steam\shell\open\command]' \
       '@="\"C:\\Program Files (x86)\\Steam\\steam.exe\" \"%1\""' '' \
+      '[HKEY_CURRENT_USER\Software\Wine\Mac Driver]' \
+      "\"RetinaMode\"=\"$retina_mode\"" '' \
       '[HKEY_CURRENT_USER\Software\Wine\WineBrowser]' \
       '"Browsers"="/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/open"' \
       '"Mailers"="/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/open"' '' \
