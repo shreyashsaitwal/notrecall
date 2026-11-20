@@ -402,10 +402,15 @@ import_prefix_settings() {
     done
   } > "$reg_file" 2>/dev/null
 
-  # Only run reg import (and restart wineserver) when settings actually changed.
+  # Only run reg import (and restart wineserver) when settings actually changed,
+  # or when user.reg no longer has our expected RetinaMode (e.g. after NotProton ran).
   reg_sha=$(/usr/bin/shasum -a 256 "$reg_file" 2>/dev/null | cut -d' ' -f1)
   stamp_file="$STEAM_COMPAT_DATA_PATH/.notrecall-reg.sha"
-  if [ -n "$reg_sha" ] && [ "$(cat "$stamp_file" 2>/dev/null || true)" = "$reg_sha" ]; then
+  retina_ok=1
+  if [ -f "$WINEPREFIX/user.reg" ] && ! grep -Fq "\"RetinaMode\"=\"$retina_mode\"" "$WINEPREFIX/user.reg" 2>/dev/null; then
+    retina_ok=0
+  fi
+  if [ "$retina_ok" -eq 1 ] && [ -n "$reg_sha" ] && [ "$(cat "$stamp_file" 2>/dev/null || true)" = "$reg_sha" ]; then
     echo "=== prefix settings unchanged, skipping reg import ===" >> "$log" 2>&1 || true
   else
     if without_lock_fds "$WINELOADER" reg import "C:\\${reg_file##*/}" >> "$log" 2>&1; then
@@ -528,7 +533,7 @@ else
 fi
 if [ "${NOTRECALL_LOG_MOUSE:-0}" = "1" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   mkdir -p "$STEAM_COMPAT_DATA_PATH/input-logs" 2>/dev/null || true
-  export WINEMAC_INPUT_STATS="${WINEMAC_INPUT_STATS:-$STEAM_COMPAT_DATA_PATH/input-logs}"
+  export WINEMAC_INPUT_STATS="${WINEMAC_INPUT_STATS:-$STEAM_COMPAT_DATA_PATH/input-logs/input}"
 fi
 if [ "${MTL_HUD_ENABLED:-0}" = "1" ]; then
   export MTL_HUD_DISABLE_MENU_BAR="${MTL_HUD_DISABLE_MENU_BAR:-1}"

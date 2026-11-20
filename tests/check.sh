@@ -188,6 +188,23 @@ grep -Fq '"DefaultConnectionSettings"=-' "$reg2_out"
 grep -Fqx '{"schema":1,"limit":"first"}' "$ow_data/notrecall-cache/cache/pipelines/load.json"
 grep -Fq "d3d11.metalfxSharpness=0.4" "$ow_env"
 
+# Regression guard: if another tool (e.g. NotProton) removes RetinaMode from user.reg,
+# import_prefix_settings must re-import even when .notrecall-reg.sha still matches.
+printf '[Software\\Wine\\Mac Driver] 1700000000\n' > "$ow_data/pfx/user.reg"
+reg3_out="$test_root/reg3.reg"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ow_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTRECALL_TEST_DISPLAY_SCALE=2 \
+  NOTRECALL_TEST_BT_MIC_UID="none" \
+  NOTRECALL_PROXY_AUTO_DETECT=1 \
+  TEST_REG_OUT="$reg3_out" \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+[ -f "$reg3_out" ]
+grep -Fq '"RetinaMode"="Y"' "$reg3_out"
+
 # Case 5: MetalFX Settings_v0.ini [GPU.6] sync, backup, and DLSS cleanup on toggle off.
 ow_settings_dir="$ow_data/pfx/drive_c/users/steamuser/Documents/Overwatch/Settings"
 mkdir -p "$ow_settings_dir"
@@ -329,7 +346,7 @@ assert_env "$pd_env1" "WINEMAC_MOUSELOOK_RAW_INTERVAL_US=1000"
 assert_env "$pd_env1" "WINEDEBUG=-all,err+all,+seh,+loaddll,+timestamp,+pid"
 assert_env "$pd_env1" "DXMT_LOG_LEVEL=info"
 assert_env "$pd_env1" "DXMT_LOG_PATH=$pd_data/dxmt-logs"
-assert_env "$pd_env1" "WINEMAC_INPUT_STATS=$pd_data/input-logs"
+assert_env "$pd_env1" "WINEMAC_INPUT_STATS=$pd_data/input-logs/input"
 [ -d "$pd_data/dxmt-logs" ]
 [ -d "$pd_data/input-logs" ]
 
