@@ -12,7 +12,7 @@ No git submodules, MinGW cross-compilers, or Apple GPTK staging are required.
 ## Build Commands
 
 ```sh
-# Validate shell scripts, VDF manifests, plugin schema, and installer dry-run
+# Validate shell scripts, VDF manifests, compat/run behavior, and installer dry-run
 make check
 
 # Build build/NotRecall.app (compiles NotRecallApp + notrecall-sysinfo)

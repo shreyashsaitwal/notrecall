@@ -12,12 +12,12 @@ SYSINFO_BIN := build/helpers/notrecall-sysinfo
 
 help:
 	@echo "NotRecall build targets:"
-	@echo "  make check         Validate shell syntax, VDF manifests, plugin schema, and dry-run installer"
+	@echo "  make check         Validate shell syntax, VDF manifests, compat/run behavior, and dry-run installer"
 	@echo "  make build-app     Build build/NotRecall.app (including notrecall-sysinfo)"
 	@echo "  make package       Run checks and build build/NotRecall.app, .zip, and .dmg (+ .sha256)"
 	@echo "  make install       Stage runtime (from RUNTIME=Recall.dmg/Recall.app/dir) & install Steam tool"
 	@echo "  make dry-run       Preview install actions without modifying ~/Library"
-	@echo "  make uninstall     Remove NotRecall Steam tool, plugin, and staged runtime"
+	@echo "  make uninstall     Remove NotRecall Steam tool, staged runtime, settings, and DMG cache"
 	@echo "  make clean         Remove build/ artifacts"
 
 check:

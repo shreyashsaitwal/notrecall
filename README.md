@@ -22,7 +22,7 @@ Use [Recall](https://github.com/AsherJN/recall)'s patched Wine + DXMT runtime as
 
 1. Open `build/NotRecall.app` (or drag it to `/Applications` from `NotRecall-<version>.dmg`).
 2. In **Overview**, check your live prerequisites, system health, and Overwatch status — any missing prerequisites (Rosetta 2, Steam, NotProton bridge) are flagged with direct actions.
-3. Click **Download & Install** (or **Install NotRecall** if a local Recall copy is detected) to stage the runtime, shader helpers, Steam compatibility tool, and NotProton plugin. For custom sources or **Dry Run**, open **Setup & Runtime** (`⌘2`).
+3. Click **Download & Install** (or **Install NotRecall** if a local Recall copy is detected) to stage the runtime, shader helpers, and Steam compatibility tool. For custom sources or **Dry Run**, open **Setup & Runtime** (`⌘3`).
 4. Click **Set Up in Steam** on the Overwatch hero card to configure Overwatch automatically, or right-click any DirectX 10/11 Windows game in Steam → **Properties → Compatibility** → enable **Force the use of a specific Steam Play compatibility tool** → select **NotRecall (Recall Wine + DXMT)**.
 5. For High-Precision raw HID mouse input, use **Show Steam** and **Input Monitoring…** in **Quick Controls & Recovery** to add `Steam.app` in **System Settings → Privacy & Security → Input Monitoring**.
 
@@ -38,10 +38,10 @@ make dry-run RUNTIME=~/Downloads/Recall-1.6.6.dmg
 # Install using a Recall .dmg, Recall.app, runtime.tar.gz, or unpacked runtime directory
 make install RUNTIME=~/Downloads/Recall-1.6.6.dmg
 
-# Update only runtime/ + Steamworks bridge without touching prefixes, shader caches, or plugins
+# Update only runtime/ + Steamworks bridge without touching prefixes, shader caches, or settings
 sh scripts/install.sh --runtime-only --runtime ~/Downloads/Recall-1.6.6.dmg
 
-# Uninstall tool, plugin, and staged runtime (preserves Steam prefixes and game saves)
+# Uninstall tool, staged runtime, settings, and DMG cache (preserves Steam prefixes and game saves)
 make uninstall
 ```
 
