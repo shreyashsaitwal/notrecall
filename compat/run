@@ -222,7 +222,12 @@ import_prefix_settings() {
       '[HKEY_CURRENT_USER\Software\Wine\WineDbg]' '"ShowCrashDialog"=dword:00000000' '' \
       '[HKEY_LOCAL_MACHINE\Software\Classes\steam]' '"URL Protocol"=""' '' \
       '[HKEY_LOCAL_MACHINE\Software\Classes\steam\shell\open\command]' \
-      '@="\"C:\\Program Files (x86)\\Steam\\steam.exe\" \"%1\""' ''
+      '@="\"C:\\Program Files (x86)\\Steam\\steam.exe\" \"%1\""' '' \
+      '[HKEY_CURRENT_USER\Software\Wine\WineBrowser]' \
+      '"Browsers"="/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/open"' \
+      '"Mailers"="/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/open"' '' \
+      '[HKEY_CURRENT_USER\Software\Wine\AppDefaults\Overwatch.exe\Mac Driver]' \
+      '"LeftOptionIsAlt"="Y"' ''
 
     printf '%s\n' "$wanted" | while IFS= read -r cid; do
       [ -n "$cid" ] || continue
