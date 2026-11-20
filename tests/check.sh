@@ -231,6 +231,18 @@ grep -Fq 'GPUVenderID = "4318"' "$ow_ini"
 grep -Fq 'GPUDeviceID = "9860"' "$ow_ini"
 grep -Fq 'HighQualityUpsample = "3"' "$ow_ini"
 
+# Regression guard: Steam install scripts (verb=run) lack user launch options and must not wipe MetalFX settings.
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ow_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTRECALL_TEST_GPU_NAME="Apple M3 Pro" \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" run "C:\\Games\\Overwatch\\vcredist.exe"
+
+grep -Fq 'GPUName = "NVIDIA GeForce RTX 4090"' "$ow_ini"
+grep -Fq 'HighQualityUpsample = "3"' "$ow_ini"
+
 HOME="$fake_home" \
   STEAM_COMPAT_APP_ID=2357570 \
   STEAM_COMPAT_DATA_PATH="$ow_data" \

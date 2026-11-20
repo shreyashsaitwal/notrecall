@@ -257,7 +257,8 @@ final class AppState: ObservableObject {
         if !running.isEmpty {
             var exited = false
             for _ in 0..<24 {
-                if NSRunningApplication.runningApplications(withBundleIdentifier: "com.valvesoftware.steam").isEmpty {
+                let guiGone = NSRunningApplication.runningApplications(withBundleIdentifier: "com.valvesoftware.steam").isEmpty
+                if guiGone && !Self.isSteamHelperRunning() {
                     exited = true
                     break
                 }
@@ -429,6 +430,21 @@ final class AppState: ObservableObject {
         return nil
     }
 
+    nonisolated private static func isSteamHelperRunning() -> Bool {
+        let proc = Process()
+        proc.executableURL = URL(filePath: "/usr/bin/pgrep")
+        proc.arguments = ["-x", "steam_osx"]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            return proc.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
     nonisolated private static func probeRosetta() -> Bool {
         let proc = Process()
         proc.executableURL = URL(filePath: "/usr/bin/arch")
@@ -497,8 +513,19 @@ final class AppState: ObservableObject {
             let recentHang = files.first { url in
                 guard url.lastPathComponent.hasPrefix("gpu-"), url.pathExtension == "json" else { return false }
                 let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                guard mtime >= cutoff, let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
-                return text.contains("\"gpu_lost\":true") || text.contains("\"hang\"") || text.contains("\"exit_reason\"")
+                guard mtime >= cutoff,
+                      let data = try? Data(contentsOf: url),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      json["schema"] as? Int == 1,
+                      let proc = json["process"] as? String,
+                      proc.caseInsensitiveCompare("Overwatch.exe") == .orderedSame else {
+                    return false
+                }
+                let ended = json["ended_process"] as? Bool ?? false
+                let revoked = json["access_revoked"] != nil
+                let errors = (json["errors"] as? [String: Any] ?? [:]).compactMapValues { ($0 as? NSNumber)?.intValue }
+                let hangs = (errors["hang"] ?? 0) + (errors["timeout"] ?? 0)
+                return ended || revoked || hangs > 0
             }
             if recentHang != nil {
                 warnings.append(HealthWarning(

@@ -8,7 +8,7 @@ enum SteamVDF {
     ) -> (headerStart: String.Index, openBrace: String.Index, closeBrace: String.Index)? {
         let region = searchRange ?? (text.startIndex..<text.endIndex)
         let escaped = NSRegularExpression.escapedPattern(for: key)
-        guard let regex = try? NSRegularExpression(pattern: "\"\(escaped)\"\\s*\\{"),
+        guard let regex = try? NSRegularExpression(pattern: "\"\(escaped)\"\\s*\\{", options: [.caseInsensitive]),
               let match = regex.firstMatch(in: text, range: NSRange(region, in: text)),
               let matchRange = Range(match.range, in: text),
               let openBrace = text[matchRange].lastIndex(of: "{") else {
@@ -49,7 +49,7 @@ enum SteamVDF {
             return nil
         }
         let body = String(text[appBlock.openBrace...appBlock.closeBrace])
-        guard let regex = try? NSRegularExpression(pattern: "\"name\"\\s+\"([^\"]*)\""),
+        guard let regex = try? NSRegularExpression(pattern: "\"name\"\\s+\"([^\"]*)\"", options: [.caseInsensitive]),
               let match = regex.firstMatch(in: body, range: NSRange(body.startIndex..., in: body)),
               let range = Range(match.range(at: 1), in: body) else {
             return nil
@@ -79,7 +79,7 @@ enum SteamVDF {
             if let appBlock = findBlockRange(named: appID, in: text, within: mapping.openBrace..<mapping.closeBrace) {
                 let blockEnd = text.index(after: appBlock.closeBrace)
                 let blockStr = String(text[appBlock.headerStart..<blockEnd])
-                if let regex = try? NSRegularExpression(pattern: "\"name\"\\s+\"[^\"]*\""),
+                if let regex = try? NSRegularExpression(pattern: "\"name\"\\s+\"[^\"]*\"", options: [.caseInsensitive]),
                    let match = regex.firstMatch(in: blockStr, range: NSRange(blockStr.startIndex..., in: blockStr)),
                    let r = Range(match.range, in: blockStr) {
                     var updatedBlock = blockStr

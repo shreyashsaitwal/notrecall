@@ -484,7 +484,7 @@ posix_to_winpath() {
 }
 
 
-if [ -z "${DXMT_CONFIG_FILE:-}" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
+if [ "$verb" = "waitforexitandrun" ] && [ -z "${DXMT_CONFIG_FILE:-}" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   if is_overwatch_launch; then
     managed_dxmt_conf="$STEAM_COMPAT_DATA_PATH/notrecall-dxmt.conf"
     tmp_dxmt_conf="$managed_dxmt_conf.tmp.$$"
@@ -564,7 +564,7 @@ stage_metalfx_nvngx() {
     rm -f "$marker" 2>/dev/null || true
   fi
 }
-stage_metalfx_nvngx
+[ "$verb" = "waitforexitandrun" ] && stage_metalfx_nvngx
 
 # Sync Overwatch's Settings_v0.ini ([GPU.*] & [Render.13] HighQualityUpsample)
 # so toggling MetalFX/DLSS doesn't make Overwatch think the GPU changed and reset video settings.
@@ -702,7 +702,7 @@ sync_overwatch_metalfx_settings() {
     rename $tmp, $path or unlink $tmp;
   ' "$settings_ini" "$backup_ini" "$metalfx_on" "$mac_gpu" >> "$log" 2>&1 || true
 }
-sync_overwatch_metalfx_settings
+[ "$verb" = "waitforexitandrun" ] && sync_overwatch_metalfx_settings
 
 # Match Recall's explicit DXMT & MetalFX WINEDLLOVERRIDES contract.
 vc_overrides=$(native_vc_runtime)
