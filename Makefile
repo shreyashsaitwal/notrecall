@@ -1,26 +1,48 @@
 RUNTIME ?=
 HELPERS ?=
-RECALL_DIR ?= recall
 APP_VERSION ?= 0.1.0
+IDENTITY ?= -
 
-.PHONY: check build-runtime build-helpers build-app package install dry-run uninstall
+export APP_VERSION IDENTITY
+
+SYSINFO_BIN := build/helpers/notrecall-sysinfo
+
+.DEFAULT_GOAL := help
+.PHONY: help check build-sysinfo build-app package install dry-run uninstall clean
+
+help:
+	@echo "NotRecall build targets:"
+	@echo "  make check         Validate shell syntax, VDF manifests, plugin schema, and dry-run installer"
+	@echo "  make build-app     Build build/NotRecall.app (including notrecall-sysinfo)"
+	@echo "  make package       Run checks and build build/NotRecall.app, .zip, and .dmg (+ .sha256)"
+	@echo "  make install       Stage runtime (from RUNTIME=Recall.dmg/Recall.app/dir) & install Steam tool"
+	@echo "  make dry-run       Preview install actions without modifying ~/Library"
+	@echo "  make uninstall     Remove NotRecall Steam tool, plugin, and staged runtime"
+	@echo "  make clean         Remove build/ artifacts"
 
 check:
 	@sh tests/check.sh
 
-build-runtime:
-	@RECALL_DIR="$(RECALL_DIR)" sh scripts/build_runtime.sh
+$(SYSINFO_BIN): scripts/notrecall_sysinfo.m
+	@mkdir -p build/helpers
+	@echo "==> Compiling notrecall-sysinfo -> $@"
+	@/usr/bin/clang -arch arm64 -mmacosx-version-min=14.0 -fobjc-arc -O2 \
+		scripts/notrecall_sysinfo.m \
+		-framework Foundation -framework CoreGraphics -framework CoreAudio \
+		-framework IOKit -framework Metal \
+		-o $@
+	@/usr/bin/strip -S -x $@ 2>/dev/null || true
+	@chmod 755 $@
 
-build-helpers:
-	@RECALL_DIR="$(RECALL_DIR)" sh scripts/build_helpers.sh
+build-sysinfo: $(SYSINFO_BIN)
 
-build-app: build-helpers
-	@APP_VERSION="$(APP_VERSION)" sh scripts/package.sh --app-only
+build-app: $(SYSINFO_BIN)
+	@sh scripts/package.sh --app-only
 
-package: check build-helpers
-	@APP_VERSION="$(APP_VERSION)" sh scripts/package.sh
+package: check $(SYSINFO_BIN)
+	@sh scripts/package.sh --strict
 
-install: check
+install: check $(SYSINFO_BIN)
 	@sh scripts/install.sh $(if $(RUNTIME),--runtime "$(RUNTIME)") $(if $(HELPERS),--helpers "$(HELPERS)")
 
 dry-run: check
@@ -28,3 +50,6 @@ dry-run: check
 
 uninstall:
 	@sh scripts/uninstall.sh
+
+clean:
+	@rm -rf build/

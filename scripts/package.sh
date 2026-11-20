@@ -1,6 +1,7 @@
 #!/bin/sh
-# Packages NotRecall as a self-contained macOS .app bundle (build/NotRecall.app)
-# and optional release DMG (build/NotRecall.dmg) + versioned runtime archive.
+# Packages NotRecall as a lightweight macOS .app bundle (build/NotRecall.app)
+# and optional release ZIP + DMG (+ SHA-256). Recall's runtime and shader
+# pipeline helpers are downloaded & verified on demand from GitHub Releases.
 set -e
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
@@ -10,15 +11,13 @@ APP_BUNDLE="$OUT_DIR/NotRecall.app"
 APP_VERSION="${APP_VERSION:-0.1.0}"
 APP_BUILD="${APP_BUILD:-1}"
 IDENTITY="${IDENTITY:--}"
-RUNTIME_ARCHIVE="${RUNTIME_ARCHIVE:-$OUT_DIR/runtime.tar.gz}"
 APP_ONLY=0
+STRICT=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --app-only)        APP_ONLY=1; shift ;;
-    --runtime-archive)
-      [ "$#" -ge 2 ] || { echo "Error: $1 requires a path argument" >&2; exit 1; }
-      RUNTIME_ARCHIVE="$2"; shift 2 ;;
+    --app-only) APP_ONLY=1; shift ;;
+    --strict)   STRICT=1; shift ;;
     --version)
       [ "$#" -ge 2 ] || { echo "Error: $1 requires a version argument" >&2; exit 1; }
       APP_VERSION="$2"; shift 2 ;;
@@ -29,7 +28,21 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR/helpers"
+
+# Build notrecall-sysinfo if missing or older than its source.
+SYSINFO_SRC="$PROJECT_DIR/scripts/notrecall_sysinfo.m"
+SYSINFO_BIN="$OUT_DIR/helpers/notrecall-sysinfo"
+if [ -f "$SYSINFO_SRC" ] && { [ ! -x "$SYSINFO_BIN" ] || [ "$SYSINFO_SRC" -nt "$SYSINFO_BIN" ]; }; then
+  echo "==> Compiling notrecall-sysinfo -> $SYSINFO_BIN"
+  /usr/bin/clang -arch arm64 -mmacosx-version-min=14.0 -fobjc-arc -O2 \
+    "$SYSINFO_SRC" \
+    -framework Foundation -framework CoreGraphics -framework CoreAudio \
+    -framework IOKit -framework Metal \
+    -o "$SYSINFO_BIN"
+  /usr/bin/strip -S -x "$SYSINFO_BIN" 2>/dev/null || true
+  chmod 755 "$SYSINFO_BIN"
+fi
 
 echo "==> Compiling NotRecallApp SwiftUI binary"
 SWIFT_BUILD_DIR="$OUT_DIR/.swift-build"
@@ -48,7 +61,6 @@ fi
 rm -f "$SWIFT_ERR_LOG"
 # shellcheck disable=SC2086
 SWIFT_BIN_DIR=$(xcrun swift build $SWIFT_SANDBOX_FLAGS --package-path "$PROJECT_DIR/app" -c release --arch arm64 --scratch-path "$SWIFT_BUILD_DIR" --show-bin-path)
-cp -f "$SWIFT_BIN_DIR/NotRecallApp" "$OUT_DIR/NotRecallApp"
 
 echo "==> Assembling $APP_BUNDLE"
 rm -rf "$APP_BUNDLE"
@@ -56,7 +68,7 @@ MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
 RES_DIR="$APP_BUNDLE/Contents/Resources"
 mkdir -p "$MACOS_DIR" "$RES_DIR/compat" "$RES_DIR/plugins" "$RES_DIR/scripts" "$RES_DIR/helpers"
 
-cp -f "$OUT_DIR/NotRecallApp" "$MACOS_DIR/NotRecallApp"
+cp -f "$SWIFT_BIN_DIR/NotRecallApp" "$MACOS_DIR/NotRecallApp"
 chmod 755 "$MACOS_DIR/NotRecallApp"
 
 # Embed compatibility tool, NotProton plugin, and installer scripts.
@@ -67,43 +79,35 @@ chmod 755 "$RES_DIR/compat/run"
 
 cp -f "$PROJECT_DIR/plugins/50-notrecall.conf"    "$RES_DIR/plugins/"
 
-for s in install.sh uninstall.sh pipeline_hook.sh patch_ntdll.sh; do
+for s in install.sh uninstall.sh pipeline_hook.sh; do
   cp -f "$PROJECT_DIR/scripts/$s" "$RES_DIR/scripts/$s"
   chmod 755 "$RES_DIR/scripts/$s"
 done
 
-# Embed built shader pipeline helpers if present.
-if [ -d "$OUT_DIR/helpers" ]; then
-  for h in portable-pipeline pipeline-prepare pipeline-warm libpipeline_prepare.dylib notrecall-sysinfo; do
-    if [ -f "$OUT_DIR/helpers/$h" ]; then
-      cp -f "$OUT_DIR/helpers/$h" "$RES_DIR/helpers/$h"
-      chmod 755 "$RES_DIR/helpers/$h"
-    fi
-  done
+if [ -x "$SYSINFO_BIN" ]; then
+  cp -f "$SYSINFO_BIN" "$RES_DIR/helpers/notrecall-sysinfo"
+  chmod 755 "$RES_DIR/helpers/notrecall-sysinfo"
+elif [ "$STRICT" -eq 1 ]; then
+  echo "Error: notrecall-sysinfo helper missing at $SYSINFO_BIN" >&2
+  exit 1
 fi
 
-# Embed self-contained Recall runtime archive if built/provided.
-if [ -f "$RUNTIME_ARCHIVE" ]; then
-  echo "    Embedding runtime archive: $RUNTIME_ARCHIVE"
-  cp -c "$RUNTIME_ARCHIVE" "$RES_DIR/runtime.tar.gz" 2>/dev/null || cp -f "$RUNTIME_ARCHIVE" "$RES_DIR/runtime.tar.gz"
-  /usr/bin/shasum -a 256 "$RES_DIR/runtime.tar.gz" | cut -d' ' -f1 > "$RES_DIR/runtime.sha256"
-else
-  echo "    Note: $RUNTIME_ARCHIVE not present; NotRecall.app will still work with --runtime or auto-discovered Recall runtimes."
+if [ -f "$PROJECT_DIR/THIRD_PARTY_NOTICES.md" ]; then
+  cp -f "$PROJECT_DIR/THIRD_PARTY_NOTICES.md" "$RES_DIR/THIRD_PARTY_NOTICES.md"
 fi
 
-# Bundle Recall license notices if submodule is present.
-if [ -d "$PROJECT_DIR/recall/licenses" ]; then
-  mkdir -p "$RES_DIR/licenses/recall"
-  cp -R "$PROJECT_DIR/recall/licenses/." "$RES_DIR/licenses/recall/"
-fi
-
-# Generate AppIcon.icns from Recall's icon helper if available.
-if [ -f "$PROJECT_DIR/recall/app/Resources/AppIcon.png" ] && [ -f "$PROJECT_DIR/recall/scripts/app_icon.swift" ]; then
+# Generate AppIcon.icns if app/Resources/AppIcon.png is provided.
+APP_ICON_PNG="$PROJECT_DIR/app/Resources/AppIcon.png"
+if [ -f "$APP_ICON_PNG" ]; then
   iconset="$OUT_DIR/AppIcon.iconset"
   rm -rf "$iconset"
-  if /usr/bin/swift "$PROJECT_DIR/recall/scripts/app_icon.swift" "$PROJECT_DIR/recall/app/Resources/AppIcon.png" "$iconset" >/dev/null 2>&1; then
-    /usr/bin/iconutil -c icns "$iconset" -o "$RES_DIR/AppIcon.icns" >/dev/null 2>&1 || true
-  fi
+  mkdir -p "$iconset"
+  for sz in 16 32 128 256 512; do
+    sz2=$((sz * 2))
+    /usr/bin/sips -z "$sz" "$sz" "$APP_ICON_PNG" --out "$iconset/icon_${sz}x${sz}.png" >/dev/null
+    /usr/bin/sips -z "$sz2" "$sz2" "$APP_ICON_PNG" --out "$iconset/icon_${sz}x${sz}@2x.png" >/dev/null
+  done
+  /usr/bin/iconutil -c icns "$iconset" -o "$RES_DIR/AppIcon.icns"
   rm -rf "$iconset"
 fi
 
@@ -140,12 +144,10 @@ sign_item() {
   fi
 }
 
-# Sign nested Mach-O helpers inside-out before signing the app bundle (avoid deprecated --deep).
-for h in libpipeline_prepare.dylib pipeline-prepare pipeline-warm portable-pipeline notrecall-sysinfo; do
-  if [ -f "$RES_DIR/helpers/$h" ]; then
-    sign_item "$RES_DIR/helpers/$h"
-  fi
-done
+# Sign nested Mach-O helpers inside-out before signing the app bundle.
+if [ -f "$RES_DIR/helpers/notrecall-sysinfo" ]; then
+  sign_item "$RES_DIR/helpers/notrecall-sysinfo"
+fi
 sign_item "$APP_BUNDLE"
 /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
 echo "    OK: $APP_BUNDLE"
@@ -154,7 +156,6 @@ if [ "$APP_ONLY" -eq 1 ]; then
   exit 0
 fi
 
-# Package distributable .zip (works everywhere) and drag-to-Applications .dmg (when hdiutil is available).
 ZIP_PATH="$OUT_DIR/NotRecall-$APP_VERSION.zip"
 rm -f "$ZIP_PATH" "$ZIP_PATH.sha256"
 echo "==> Creating ZIP archive: $ZIP_PATH"
@@ -170,14 +171,17 @@ cp -cR "$APP_BUNDLE" "$DMG_STAGE/NotRecall.app" 2>/dev/null || cp -R "$APP_BUNDL
 ln -s /Applications "$DMG_STAGE/Applications"
 
 echo "==> Creating DMG: $DMG_PATH"
-# Prefer macOS 27's `diskutil image create from` (replaces deprecated `hdiutil create`),
-# falling back to `hdiutil create` on older macOS releases.
 if /usr/sbin/diskutil image create from "$DMG_STAGE" --volumeName "NotRecall" --format UDZO "$DMG_PATH" >/dev/null 2>&1 \
   || /usr/bin/hdiutil create -volname "NotRecall" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_PATH" >/dev/null 2>&1; then
   (cd "$OUT_DIR" && /usr/bin/shasum -a 256 "NotRecall-$APP_VERSION.dmg" > "NotRecall-$APP_VERSION.dmg.sha256")
   echo "    OK: $DMG_PATH"
 else
   rm -f "$DMG_PATH"
+  if [ "$STRICT" -eq 1 ]; then
+    echo "Error: disk image creation failed in --strict mode." >&2
+    rm -rf "$DMG_STAGE"
+    exit 1
+  fi
   echo "    Note: disk image creation unavailable in this environment (run 'make package' from Terminal to also produce $DMG_PATH)."
 fi
 rm -rf "$DMG_STAGE"

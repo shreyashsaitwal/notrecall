@@ -12,8 +12,6 @@ for f in \
   "$PROJECT_DIR/scripts/pipeline_hook.sh" \
   "$PROJECT_DIR/scripts/install.sh" \
   "$PROJECT_DIR/scripts/uninstall.sh" \
-  "$PROJECT_DIR/scripts/build_runtime.sh" \
-  "$PROJECT_DIR/scripts/build_helpers.sh" \
   "$PROJECT_DIR/scripts/patch_ntdll.sh" \
   "$PROJECT_DIR/scripts/package.sh" \
   "$PROJECT_DIR/tests/check.sh"; do
@@ -276,5 +274,21 @@ hl_link="$hl_data/pfx/drive_c/users/steamuser/Documents/Overwatch/videos/overwat
 [ "$(cat "$fake_home/Movies/Overwatch/potg.mp4")" = "existing" ]
 [ "$(cat "$fake_home/Movies/Overwatch/potg 2.mp4")" = "migrated" ]
 echo "    OK: Phase 2 registry QoL, 1x/2x RetinaMode, BT mic routing, MetalFX Settings_v0.ini sync, and Highlights migration"
+
+
+echo "==> Testing scripts/install.sh --dry-run against a mock Recall.app bundle"
+mock_recall_dir=$(mktemp -d)
+mkdir -p "$mock_recall_dir/Recall.app/Contents/Resources" "$mock_recall_dir/Recall.app/Contents/Helpers"
+: > "$mock_recall_dir/Recall.app/Contents/Resources/runtime.tar.gz"
+printf '{"appVersion":"1.6.6","runtimeVersion":"phase2-test"}\n' > "$mock_recall_dir/Recall.app/Contents/Resources/release.json"
+for h in ow2-pipeline pipeline-prepare pipeline-warm libpipeline_prepare.dylib; do
+  printf '#!/bin/sh\n' > "$mock_recall_dir/Recall.app/Contents/Helpers/$h"
+  chmod 755 "$mock_recall_dir/Recall.app/Contents/Helpers/$h"
+done
+dry_out=$(sh "$PROJECT_DIR/scripts/install.sh" --dry-run --skip-verify --runtime "$mock_recall_dir/Recall.app")
+printf '%s\n' "$dry_out" | grep -q 'Staging portable-pipeline from: .*/ow2-pipeline'
+printf '%s\n' "$dry_out" | grep -q 'Installed Recall 1.6.6 runtime.'
+rm -rf "$mock_recall_dir"
+echo "    OK: install.sh --dry-run mapped ow2-pipeline -> portable-pipeline and read Recall 1.6.6 metadata"
 
 echo "==> All checks passed!"

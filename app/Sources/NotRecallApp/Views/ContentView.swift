@@ -16,6 +16,22 @@ struct ContentView: View {
                 .tag(2)
         }
         .padding()
+        .sheet(isPresented: $state.showWhatsNewSheet) {
+            if let release = state.availableRecallUpdate ?? state.latestRecallRelease {
+                WhatsNewSheet(
+                    release: release,
+                    installedVersion: state.installedRecallVersion,
+                    isBusy: state.isBusy,
+                    onUpdate: {
+                        state.showWhatsNewSheet = false
+                        state.downloadAndInstallRecall(release, runtimeOnly: state.stagedRuntimeReady)
+                    },
+                    onDismiss: {
+                        state.showWhatsNewSheet = false
+                    }
+                )
+            }
+        }
     }
 
     private var statusTab: some View {
@@ -26,6 +42,13 @@ struct ContentView: View {
                         .font(.title2.weight(.semibold))
                     Spacer()
                     Button {
+                        Task { await state.checkForRecallUpdates(silent: false) }
+                    } label: {
+                        Label(state.isCheckingForUpdates ? "Checking…" : "Check Updates", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .controlSize(.small)
+                    .disabled(state.isCheckingForUpdates || state.isBusy)
+                    Button {
                         state.copyDiagnostics()
                     } label: {
                         Label("Copy Diagnostics", systemImage: "doc.on.clipboard")
@@ -35,6 +58,10 @@ struct ContentView: View {
 
                 Text("Runs Recall's patched Wine + DXMT runtime as a Steam Play compatibility tool on top of stock NotProton.")
                     .foregroundStyle(.secondary)
+
+                if let update = state.availableRecallUpdate {
+                    recallUpdateCallout(update)
+                }
 
                 if state.hasMissingPrerequisites {
                     prerequisiteCallout
@@ -52,12 +79,15 @@ struct ContentView: View {
                         statusRow("Steam", ok: state.steamAppURL != nil, detail: state.steamAppURL?.path ?? "Not found in /Applications")
                         statusRow("NotProton Steamworks Bridge", ok: state.notProtonBridgeReady, detail: state.notProtonSupport.appending(path: "bridge").path)
                         HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: state.activeRuntimeSource != nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                .foregroundStyle(state.activeRuntimeSource != nil ? .green : .orange)
+                            Image(systemName: state.activeRuntimeSource != nil ? "checkmark.circle.fill" : "arrow.down.circle.fill")
+                                .foregroundStyle(state.activeRuntimeSource != nil ? .green : .blue)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(state.customRuntimeURL != nil ? "Custom Recall Runtime" : "Bundled / Source Recall Runtime")
+                                Text(state.customRuntimeURL != nil ? "Custom Recall Source" : (state.activeRuntimeSource != nil ? "Local Recall Source" : "Recall Release Download"))
                                     .font(.body)
-                                Text(state.activeRuntimeSource?.path ?? "Not found (run 'make build-runtime' or choose a local runtime)")
+                                Text(
+                                    state.activeRuntimeSource?.path
+                                        ?? "Will download \(state.preferredDownloadRelease.title) from GitHub\(state.preferredDownloadRelease.formattedSize.map { " (\($0))" } ?? "")"
+                                )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -74,8 +104,7 @@ struct ContentView: View {
                         statusRow(
                             "Staged NotRecall Runtime",
                             ok: state.stagedRuntimeReady,
-                            detail: state.stagedRuntimeVersion.map { "\($0) — \(state.notRecallSupport.appending(path: "runtime").path)" }
-                                ?? state.notRecallSupport.appending(path: "runtime").path
+                            detail: stagedRuntimeDetail
                         )
                         statusRow("Steam Compatibility Tool (notrecall-proton)", ok: state.steamToolInstalled, detail: state.steamCompatTool.path)
                         statusRow("NotProton UI Plugin (50-notrecall.conf)", ok: state.pluginInstalled, detail: state.pluginFile.path)
@@ -99,12 +128,32 @@ struct ContentView: View {
                     .padding(.vertical, 4)
                 }
 
+                if let progress = state.downloadProgress {
+                    GroupBox {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ProgressView(value: progress, total: 1.0)
+                                Text(state.downloadStatusText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Button("Cancel") {
+                                state.cancelDownload()
+                            }
+                            .controlSize(.small)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+
                 HStack(spacing: 8) {
-                    Button("Install / Update") {
-                        Task {
-                            var args: [String] = []
-                            if let rt = state.activeRuntimeSource { args += ["--runtime", rt.path] }
-                            await state.runProjectScript("scripts/install.sh", extraArgs: args)
+                    Button(state.activeRuntimeSource != nil ? "Install / Update" : "Download & Install") {
+                        if let rt = state.activeRuntimeSource {
+                            Task {
+                                await state.runProjectScript("scripts/install.sh", extraArgs: ["--runtime", rt.path])
+                            }
+                        } else {
+                            state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: false)
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -112,10 +161,12 @@ struct ContentView: View {
 
                     if state.stagedRuntimeReady {
                         Button("Update Runtime Only") {
-                            Task {
-                                var args = ["--runtime-only"]
-                                if let rt = state.activeRuntimeSource { args += ["--runtime", rt.path] }
-                                await state.runProjectScript("scripts/install.sh", extraArgs: args)
+                            if let rt = state.activeRuntimeSource {
+                                Task {
+                                    await state.runProjectScript("scripts/install.sh", extraArgs: ["--runtime-only", "--runtime", rt.path])
+                                }
+                            } else {
+                                state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: true)
                             }
                         }
                         .disabled(state.isBusy)
@@ -154,6 +205,51 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    private var stagedRuntimeDetail: String {
+        let path = state.notRecallSupport.appending(path: "runtime").path
+        var parts: [String] = []
+        if let recallVer = state.installedRecallVersion {
+            parts.append("Recall \(recallVer)")
+        }
+        if let rtVer = state.stagedRuntimeVersion {
+            parts.append(rtVer)
+        }
+        if parts.isEmpty { return path }
+        return "\(parts.joined(separator: " • ")) — \(path)"
+    }
+
+    private func recallUpdateCallout(_ update: RecallReleaseInfo) -> some View {
+        GroupBox {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.blue)
+                    .font(.title3)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Recall \(update.version) is available")
+                        .font(.headline)
+                    Text(
+                        state.installedRecallVersion.map { "You have Recall \($0) staged. Review what's new or update your runtime." }
+                            ?? "A newer Recall release is available on GitHub."
+                    )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("What's New…") {
+                    state.showWhatsNewSheet = true
+                }
+                .controlSize(.small)
+                Button("Update") {
+                    state.downloadAndInstallRecall(update, runtimeOnly: state.stagedRuntimeReady)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(state.isBusy)
+            }
+            .padding(.vertical, 2)
         }
     }
 
@@ -408,3 +504,90 @@ struct ContentView: View {
         }
     }
 }
+
+struct WhatsNewSheet: View {
+    let release: RecallReleaseInfo
+    let installedVersion: String?
+    let isBusy: Bool
+    let onUpdate: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("What's New in \(release.title)")
+                        .font(.title2.weight(.semibold))
+                    HStack(spacing: 8) {
+                        if let installed = installedVersion {
+                            Text("Installed: \(installed)")
+                        }
+                        if let size = release.formattedSize {
+                            Text("Download: \(size)")
+                        }
+                        if let minOS = release.minimumMacOS {
+                            Text("Requires macOS \(minOS)+")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("View on GitHub") {
+                    NSWorkspace.shared.open(release.releasePageURL)
+                }
+                .controlSize(.small)
+            }
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(release.whatsNewMarkdown.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        if trimmed.isEmpty {
+                            Spacer().frame(height: 2)
+                        } else if trimmed.hasPrefix("## ") {
+                            Text(String(trimmed.dropFirst(3)))
+                                .font(.headline)
+                                .padding(.top, 4)
+                        } else if trimmed.hasPrefix("### ") {
+                            Text(String(trimmed.dropFirst(4)))
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.top, 2)
+                        } else if let attributed = try? AttributedString(markdown: trimmed) {
+                            Text(attributed)
+                                .font(.body)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text(trimmed)
+                                .font(.body)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            }
+            .frame(minHeight: 200, maxHeight: 340)
+
+            Divider()
+
+            HStack {
+                Text("NotRecall will download \(release.dmgName), verify its SHA-256 and code signature, and extract the updated runtime.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Not Now", action: onDismiss)
+                    .keyboardShortcut(.cancelAction)
+                Button("Update to \(release.version)", action: onUpdate)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isBusy)
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
+    }
+}
+
