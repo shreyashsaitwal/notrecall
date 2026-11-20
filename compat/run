@@ -125,9 +125,7 @@ sync_notproton_adoption
 
 # Translate Steam Compatibility UI plugin vars (set by NotProton's 50-notrecall.conf
 # when notrecall-proton is adopted) without clobbering explicit raw env overrides.
-# Child options depend on [NOTPROTON_NOTRECALL], matching NotProton's depends contract.
 load_notproton_plugin_env() {
-  [ "${NOTPROTON_NOTRECALL:-}" = "1" ] || return 0
   [ "${NOTPROTON_NOTRECALL_METALFX:-}" = "1" ]           && [ -z "${DXMT_ENABLE_NVEXT+1}" ]          && export DXMT_ENABLE_NVEXT=1
   [ "${NOTPROTON_NOTRECALL_MTL_HUD:-}" = "1" ]           && [ -z "${MTL_HUD_ENABLED+1}" ]            && export MTL_HUD_ENABLED=1
   [ "${NOTPROTON_NOTRECALL_FAST_KEYS:-}" = "1" ]         && [ -z "${WINEMAC_APPKIT_UPDATE_CYCLE+1}" ] && export WINEMAC_APPKIT_UPDATE_CYCLE=0
@@ -140,8 +138,6 @@ load_notproton_plugin_env() {
   [ "${NOTPROTON_NOTRECALL_LOG_CRASHES:-}" = "1" ]       && [ -z "${NOTRECALL_LOG_CRASHES+1}" ]      && export NOTRECALL_LOG_CRASHES=1
   [ "${NOTPROTON_NOTRECALL_LOG_GRAPHICS:-}" = "1" ]      && [ -z "${NOTRECALL_LOG_GRAPHICS+1}" ]     && export NOTRECALL_LOG_GRAPHICS=1
   [ "${NOTPROTON_NOTRECALL_LOG_MOUSE:-}" = "1" ]         && [ -z "${NOTRECALL_LOG_MOUSE+1}" ]        && export NOTRECALL_LOG_MOUSE=1
-  [ "${NOTPROTON_NOTRECALL_REBUILD_SHADERS:-}" = "1" ]   && [ -z "${NOTRECALL_REBUILD_SHADERS+1}" ]  && export NOTRECALL_REBUILD_SHADERS=1
-  [ "${NOTPROTON_NOTRECALL_RESET_DISPLAY:-}" = "1" ]     && [ -z "${NOTRECALL_RESET_DISPLAY+1}" ]    && export NOTRECALL_RESET_DISPLAY=1
 
   [ -n "${NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS:-}" ] && [ -z "${NOTRECALL_METALFX_SHARPNESS+1}" ] && export NOTRECALL_METALFX_SHARPNESS="$NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS"
   [ -n "${NOTPROTON_ENV_NOTRECALL_MOUSE_MODE:-}" ]        && [ -z "${NOTRECALL_MOUSE_MODE+1}" ]        && export NOTRECALL_MOUSE_MODE="$NOTPROTON_ENV_NOTRECALL_MOUSE_MODE"
