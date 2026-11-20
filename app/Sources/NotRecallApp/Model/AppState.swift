@@ -39,6 +39,7 @@ struct HealthWarning: Identifiable, Hashable, Sendable {
 
 enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
     case overview
+    case settings
     case setup
     case shaders
     case logs
@@ -48,6 +49,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
     var title: String {
         switch self {
         case .overview: return "Overview"
+        case .settings: return "Game Settings"
         case .setup: return "Setup & Runtime"
         case .shaders: return "Shaders"
         case .logs: return "Logs"
@@ -57,6 +59,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
     var symbol: String {
         switch self {
         case .overview: return "square.grid.2x2"
+        case .settings: return "slider.horizontal.3"
         case .setup: return "shippingbox"
         case .shaders: return "cpu"
         case .logs: return "terminal"
@@ -101,6 +104,7 @@ final class AppState: ObservableObject {
     @Published var recentLogTitle = ""
     @Published var statusMessage = ""
     @Published var isBusy = false
+    @Published var gameSettings = GameSettings()
 
     var isConfirmingClearShader: Bool {
         get { pendingClearShaderEntry != nil }
@@ -123,6 +127,92 @@ final class AppState: ObservableObject {
     var steamConfigVDF: URL { home.appending(path: "Library/Application Support/Steam/config/config.vdf") }
     var overwatchHighlightsDir: URL { home.appending(path: "Movies/Overwatch") }
     var pluginFile: URL { notProtonSupport.appending(path: "plugins/50-notrecall.conf") }
+    var settingsEnvFile: URL { notRecallSupport.appending(path: "settings.env") }
+
+    // KeyPath projections for GameSettings toggles/pickers (persists immediately on user change).
+    var metalFXUpscaling: Bool {
+        get { gameSettings.metalFXUpscaling }
+        set { gameSettings.metalFXUpscaling = newValue; saveGameSettings() }
+    }
+    var metalFXSharpness: MetalFXSharpness {
+        get { gameSettings.metalFXSharpness }
+        set { gameSettings.metalFXSharpness = newValue; saveGameSettings() }
+    }
+    var metalHUD: Bool {
+        get { gameSettings.metalHUD }
+        set { gameSettings.metalHUD = newValue; saveGameSettings() }
+    }
+    var mouseMode: MouseMode {
+        get { gameSettings.mouseMode }
+        set { gameSettings.mouseMode = newValue; saveGameSettings() }
+    }
+    var mouseRate: MousePollingLimit {
+        get { gameSettings.mouseRate }
+        set { gameSettings.mouseRate = newValue; saveGameSettings() }
+    }
+    var framePacing: Bool {
+        get { gameSettings.framePacing }
+        set { gameSettings.framePacing = newValue; saveGameSettings() }
+    }
+    var fpsLimit: Int {
+        get { gameSettings.fpsLimit }
+        set { gameSettings.fpsLimit = newValue; saveGameSettings() }
+    }
+    var shaderMemory: ShaderMemoryBudget {
+        get { gameSettings.shaderMemory }
+        set { gameSettings.shaderMemory = newValue; saveGameSettings() }
+    }
+    var fastKeys: Bool {
+        get { gameSettings.fastKeys }
+        set { gameSettings.fastKeys = newValue; saveGameSettings() }
+    }
+    var proxyAutoDetect: Bool {
+        get { gameSettings.proxyAutoDetect }
+        set { gameSettings.proxyAutoDetect = newValue; saveGameSettings() }
+    }
+    var gameMode: Bool {
+        get { gameSettings.gameMode }
+        set { gameSettings.gameMode = newValue; saveGameSettings() }
+    }
+    var backgroundShaderPrep: Bool {
+        get { gameSettings.backgroundShaderPrep }
+        set { gameSettings.backgroundShaderPrep = newValue; saveGameSettings() }
+    }
+    var rawControllers: Bool {
+        get { gameSettings.rawControllers }
+        set { gameSettings.rawControllers = newValue; saveGameSettings() }
+    }
+    var msync: Bool {
+        get { gameSettings.msync }
+        set { gameSettings.msync = newValue; saveGameSettings() }
+    }
+    var logCrashes: Bool {
+        get { gameSettings.logCrashes }
+        set { gameSettings.logCrashes = newValue; saveGameSettings() }
+    }
+    var logGraphics: Bool {
+        get { gameSettings.logGraphics }
+        set { gameSettings.logGraphics = newValue; saveGameSettings() }
+    }
+    var logMouse: Bool {
+        get { gameSettings.logMouse }
+        set { gameSettings.logMouse = newValue; saveGameSettings() }
+    }
+
+    func saveGameSettings() {
+        do {
+            try gameSettings.write(to: settingsEnvFile)
+            statusMessage = "Saved game settings. Applies on next launch."
+        } catch {
+            statusMessage = "Could not save settings: \(error.localizedDescription)"
+        }
+    }
+
+    func resetGameSettingsToDefaults() {
+        gameSettings = GameSettings()
+        saveGameSettings()
+        statusMessage = "Reset game settings to defaults."
+    }
 
     var activeRuntimeSource: URL? { customRuntimeURL ?? recallRuntimeDetected }
     var overwatchConfiguredForNotRecall: Bool { overwatchCompatTool == "notrecall-proton" }
@@ -215,6 +305,7 @@ final class AppState: ObservableObject {
         steamToolInstalled = fm.isExecutableFile(atPath: steamCompatTool.appending(path: "run").path)
         pluginInstalled = fm.fileExists(atPath: pluginFile.path)
         helpersInstalled = fm.isExecutableFile(atPath: notRecallSupport.appending(path: "helpers/portable-pipeline").path)
+        gameSettings = GameSettings.load(from: settingsEnvFile)
 
         recallRuntimeDetected = Self.detectRecallRuntime(home: home)
 

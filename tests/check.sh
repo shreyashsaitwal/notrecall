@@ -398,6 +398,36 @@ grep -Fq 'dxgi.fullscreenCanvasWidth = 2560' "$pd_data/notrecall-dxmt.conf"
 grep -Fq 'dxgi.fullscreenCanvasHeight = 1440' "$pd_data/notrecall-dxmt.conf"
 echo "    OK: Mouse polling cap, per-display resolution/refresh memory + clamping, and diagnostic logging presets"
 
+# Case 9: Global settings.env + per-game notrecall-settings.env loading & env override precedence.
+cfg_data="$test_root/compatdata/cfg-ow"
+mkdir -p "$cfg_data" "$fake_home/Library/Application Support/notrecall"
+cat > "$fake_home/Library/Application Support/notrecall/settings.env" <<'CFG'
+# Global NotRecall settings
+MTL_HUD_ENABLED=1
+NOTRECALL_MOUSE_MODE=classic
+DXMT_ENABLE_NVEXT=1
+NOTRECALL_METALFX_SHARPNESS=high
+CFG
+cat > "$cfg_data/notrecall-settings.env" <<'CFG'
+NOTRECALL_MOUSE_MODE=precise
+CFG
+cfg_env="$test_root/cfg.env"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$cfg_data" \
+  NOTRECALL_GAME_MODE=0 \
+  DXMT_ENABLE_NVEXT=0 \
+  TEST_ENV_OUT="$cfg_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+assert_env "$cfg_env" "MTL_HUD_ENABLED=1"
+assert_env "$cfg_env" "MTL_HUD_DISABLE_MENU_BAR=1"
+assert_env "$cfg_env" "WINEMAC_INPUT_VARIANT=precise"
+assert_env_absent "$cfg_env" "WINEMAC_RAW_SOURCE"
+assert_env "$cfg_env" "DXMT_ENABLE_NVEXT=0"
+rm -f "$fake_home/Library/Application Support/notrecall/settings.env"
+echo "    OK: settings.env global/per-game loading and explicit env override precedence"
+
 
 
 

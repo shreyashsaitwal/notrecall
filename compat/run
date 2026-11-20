@@ -95,6 +95,35 @@ case "$verb" in
     ;;
 esac
 
+# Load NotRecall's saved settings (per-game override first, then global) without
+# clobbering any env vars explicitly passed in Steam Launch Options.
+load_settings_file() {
+  cfg="$1"
+  [ -f "$cfg" ] && [ ! -L "$cfg" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ""|\#*) continue ;;
+    esac
+    key="${line%%=*}"
+    val="${line#*=}"
+    [ "$key" != "$line" ] || continue
+    case "$key" in
+      DXMT_ENABLE_NVEXT|NOTRECALL_METALFX_SHARPNESS|NOTRECALL_MOUSE_MODE|NOTRECALL_MOUSE_RATE|\
+      NOTRECALL_FRAME_PACING|NOTRECALL_FPS_LIMIT|NOTRECALL_SHADER_MEM_MB|MTL_HUD_ENABLED|\
+      WINEMAC_APPKIT_UPDATE_CYCLE|NOTRECALL_PROXY_AUTO_DETECT|NOTRECALL_GAME_MODE|\
+      NOTRECALL_SKIP_PRECOMPILE|NOTRECALL_RAW_CONTROLLERS|WINEMSYNC|\
+      NOTRECALL_LOG_CRASHES|NOTRECALL_LOG_GRAPHICS|NOTRECALL_LOG_MOUSE|NOTRECALL_MOUSE_EXE)
+        eval "already=\${$key+1}"
+        if [ -z "$already" ]; then
+          export "$key=$val"
+        fi
+        ;;
+    esac
+  done < "$cfg"
+}
+[ -n "${STEAM_COMPAT_DATA_PATH:-}" ] && load_settings_file "$STEAM_COMPAT_DATA_PATH/notrecall-settings.env"
+load_settings_file "$nr_support/settings.env"
+
 # 3. Extract target .exe basename for Recall's dynamic env vars.
 target="${1:-}"
 exe_name=""

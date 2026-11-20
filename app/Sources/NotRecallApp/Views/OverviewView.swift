@@ -87,8 +87,11 @@ struct OverviewView: View {
 
                 HStack(alignment: .top, spacing: 14) {
                     PlayerControlsCard(
+                        metalFXUpscaling: $state.metalFXUpscaling,
+                        metalHUD: $state.metalHUD,
                         hasSteamApp: state.steamAppURL != nil,
                         isBusy: state.isBusy,
+                        onOpenAllSettings: { state.selectedSection = .settings },
                         onShowSteam: { state.revealSteamInFinder() },
                         onOpenInputMonitoring: { state.openInputMonitoringSettings() },
                         onResetDisplay: { state.confirmResetDisplay = true },
@@ -427,8 +430,11 @@ struct OverviewHealthWarnings: View {
 // MARK: - Two-Column Bottom Cards (Always Visible on Main Screen)
 
 struct PlayerControlsCard: View {
+    @Binding var metalFXUpscaling: Bool
+    @Binding var metalHUD: Bool
     let hasSteamApp: Bool
     let isBusy: Bool
+    let onOpenAllSettings: () -> Void
     let onShowSteam: () -> Void
     let onOpenInputMonitoring: () -> Void
     let onResetDisplay: () -> Void
@@ -438,11 +444,32 @@ struct PlayerControlsCard: View {
     var body: some View {
         SurfaceCard(padding: 16) {
             VStack(alignment: .leading, spacing: 12) {
-                CardHeader(
-                    title: "Quick Controls & Recovery",
-                    subtitle: "Everyday controls for aim, display fixes, and frozen games.",
-                    symbol: "slider.horizontal.3"
+                HStack(alignment: .top) {
+                    CardHeader(
+                        title: "Quick Controls & Recovery",
+                        subtitle: "Saved directly by NotRecall — no Steam Launch Options needed.",
+                        symbol: "slider.horizontal.3"
+                    )
+                    Spacer(minLength: 8)
+                    Button("All Settings", action: onOpenAllSettings)
+                        .buttonStyle(.borderless)
+                        .font(NotRecallTheme.font(12, .medium))
+                        .foregroundStyle(NotRecallTheme.brand)
+                }
+
+                SettingsToggleRow(
+                    title: "MetalFX Upscaling",
+                    detail: "Enables NVIDIA DLSS in Overwatch via Apple MetalFX.",
+                    isOn: $metalFXUpscaling
                 )
+
+                SettingsToggleRow(
+                    title: "Metal Performance HUD",
+                    detail: "Shows FPS, frame time, and shader overlay in game.",
+                    isOn: $metalHUD
+                )
+
+                Divider()
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("High-Precision Mouse")

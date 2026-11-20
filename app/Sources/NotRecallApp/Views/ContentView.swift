@@ -251,6 +251,8 @@ struct DetailContentRouter: View {
         switch state.selectedSection {
         case .overview:
             OverviewView(state: state)
+        case .settings:
+            GameSettingsView(state: state)
         case .setup:
             SetupView(state: state)
         case .shaders:
