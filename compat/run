@@ -31,9 +31,7 @@ fi
 
 show_alert() {
   [ "$verb" != "run" ] || return 0
-  osascript >/dev/null 2>&1 <<APPLESCRIPT || true
-display alert "$1" message "$2" as critical
-APPLESCRIPT
+  osascript -e 'on run argv' -e 'display alert (item 1 of argv) message (item 2 of argv) as critical' -e 'end run' -- "$1" "$2" >/dev/null 2>&1 || true
 }
 
 # 1. Verify Recall runtime and NotProton bridge are staged.
@@ -100,13 +98,19 @@ esac
 load_settings_file() {
   cfg="$1"
   [ -f "$cfg" ] && [ ! -L "$cfg" ] || return 0
+  cr=$(printf '\r')
   while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%"$cr"}"
+    line="${line#"${line%%[![:space:]]*}"}"
     case "$line" in
       ""|\#*) continue ;;
     esac
     key="${line%%=*}"
     val="${line#*=}"
     [ "$key" != "$line" ] || continue
+    key="${key%"${key##*[![:space:]]}"}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
     case "$key" in
       DXMT_ENABLE_NVEXT|NOTRECALL_METALFX_SHARPNESS|NOTRECALL_MOUSE_MODE|NOTRECALL_MOUSE_RATE|\
       NOTRECALL_FRAME_PACING|NOTRECALL_FPS_LIMIT|NOTRECALL_SHADER_MEM_MB|MTL_HUD_ENABLED|\
@@ -414,7 +418,7 @@ import_prefix_settings() {
     echo "=== prefix settings unchanged, skipping reg import ===" >> "$log" 2>&1 || true
   else
     if without_lock_fds "$WINELOADER" reg import "C:\\${reg_file##*/}" >> "$log" 2>&1; then
-      printf '%s\n' "$reg_sha" > "$stamp_file" 2>/dev/null || true
+      printf '%s\n' "$reg_sha" > "$stamp_file.tmp.$$" 2>/dev/null && mv -f "$stamp_file.tmp.$$" "$stamp_file" 2>/dev/null || rm -f "$stamp_file.tmp.$$"
       printf '%s\n' "$wanted" | sed '/^$/d' | sort -u > "$controllers_file.new" 2>/dev/null && \
         mv -f "$controllers_file.new" "$controllers_file" 2>/dev/null || rm -f "$controllers_file.new"
       without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
@@ -563,18 +567,21 @@ seed_overwatch_preferences() {
   screen_id="default"
   def_w=1920; def_h=1200; def_hz=120; max_w=16384; max_h=16384
   if [ -n "${NOTRECALL_TEST_DISPLAY_INFO:-}" ]; then
-    set -- $NOTRECALL_TEST_DISPLAY_INFO
-    screen_id="${1:-default}"; def_w="${2:-1920}"; def_h="${3:-1200}"
-    def_hz="${4:-120}"; max_w="${5:-16384}"; max_h="${6:-16384}"
+    IFS=' ' read -r screen_id def_w def_h def_hz max_w max_h _ <<EOF
+$NOTRECALL_TEST_DISPLAY_INFO
+EOF
+    screen_id="${screen_id:-default}"
   elif [ -n "${NOTRECALL_TEST_DISPLAY_DEFAULT:-}" ]; then
-    set -- $NOTRECALL_TEST_DISPLAY_DEFAULT
-    def_w="${1:-1920}"; def_h="${2:-1200}"; def_hz="${3:-120}"
+    IFS=' ' read -r def_w def_h def_hz _ <<EOF
+$NOTRECALL_TEST_DISPLAY_DEFAULT
+EOF
   elif [ -x "$nr_helpers/notrecall-sysinfo" ]; then
     info=$("$nr_helpers/notrecall-sysinfo" display-info 2>/dev/null || true)
     if [ -n "$info" ]; then
-      set -- $info
-      screen_id="${1:-default}"; def_w="${2:-1920}"; def_h="${3:-1200}"
-      def_hz="${4:-120}"; max_w="${5:-16384}"; max_h="${6:-16384}"
+      IFS=' ' read -r screen_id def_w def_h def_hz max_w max_h _ <<EOF
+$info
+EOF
+      screen_id="${screen_id:-default}"
     fi
   fi
   case "$def_w" in ''|*[!0-9]*) def_w=1920 ;; esac
@@ -778,9 +785,13 @@ seed_overwatch_preferences() {
       print "$game_w $game_h\n";
     ' "$settings_ini" "$backup_ini" "$state_file" "$seed_marker" "$screen_id" "$def_w" "$def_h" "$def_hz" "$max_w" "$max_h" 2>> "$log" || true)
     [ -f "$settings_ini" ] && : > "$seed_marker" 2>/dev/null || true
-    set -- $dims
-    ow_canvas_w="${1:-$def_w}"
-    ow_canvas_h="${2:-$def_h}"
+    IFS=' ' read -r parsed_w parsed_h _ <<EOF
+$dims
+EOF
+    case "${parsed_w:-}" in ''|*[!0-9]*) parsed_w="$def_w" ;; esac
+    case "${parsed_h:-}" in ''|*[!0-9]*) parsed_h="$def_h" ;; esac
+    ow_canvas_w="$parsed_w"
+    ow_canvas_h="$parsed_h"
   else
     ow_canvas_w="$def_w"
     ow_canvas_h="$def_h"
@@ -833,14 +844,16 @@ append_dxmt_cfg() {
 if [ "${NOTRECALL_FRAME_PACING:-on}" = "on" ]; then
   append_dxmt_cfg "dxgi.presentPacing=True;dxgi.presentPacingMode=3;dxgi.presentPacingTargetUs=1000"
 fi
-if [ -n "${NOTRECALL_FPS_LIMIT:-}" ] && [ "$NOTRECALL_FPS_LIMIT" != "0" ]; then
-  append_dxmt_cfg "d3d11.preferredMaxFrameRate=$NOTRECALL_FPS_LIMIT"
-fi
+case "${NOTRECALL_FPS_LIMIT:-}" in
+  ""|0|*[!0-9]*) ;;
+  *) append_dxmt_cfg "d3d11.preferredMaxFrameRate=$NOTRECALL_FPS_LIMIT" ;;
+esac
 if [ "${DXMT_ENABLE_NVEXT:-0}" = "1" ] && [ -n "${NOTRECALL_METALFX_SHARPNESS:-}" ]; then
   case "$NOTRECALL_METALFX_SHARPNESS" in
     off|0|0.0|0.00) ;;
     low)  append_dxmt_cfg "d3d11.metalfxSharpness=0.4" ;;
     high) append_dxmt_cfg "d3d11.metalfxSharpness=0.8" ;;
+    *[!0-9.]*) ;;
     *)    append_dxmt_cfg "d3d11.metalfxSharpness=$NOTRECALL_METALFX_SHARPNESS" ;;
   esac
 fi
@@ -1086,20 +1099,15 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   # Recall's pipeline_cache.c reads {"schema":1,"limit":"all"|"first"|<MiB>} from load.json.
   # Write {"schema":1,"limit":"all"} by default to match Recall's applyShaderMemory().
   shader_mem="${NOTRECALL_SHADER_MEM_MB:-all}"
+  load_json_tmp="$DXMT_PIPELINE_CACHE_PATH/load.json.tmp.$$"
   case "$shader_mem" in
-    ""|0|all)
-      printf '{"schema":1,"limit":"all"}\n' > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
-      ;;
-    first)
-      printf '{"schema":1,"limit":"first"}\n' > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
-      ;;
-    *[!0-9]*)
-      printf '{"schema":1,"limit":"all"}\n' > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
-      ;;
-    *)
-      printf '{"schema":1,"limit":%s}\n' "$shader_mem" > "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || true
-      ;;
+    ""|0|all) load_json_body='{"schema":1,"limit":"all"}' ;;
+    first)    load_json_body='{"schema":1,"limit":"first"}' ;;
+    *[!0-9]*) load_json_body='{"schema":1,"limit":"all"}' ;;
+    *)        load_json_body="{\"schema\":1,\"limit\":$shader_mem}" ;;
   esac
+  printf '%s\n' "$load_json_body" > "$load_json_tmp" 2>/dev/null && \
+    mv -f "$load_json_tmp" "$DXMT_PIPELINE_CACHE_PATH/load.json" 2>/dev/null || rm -f "$load_json_tmp"
 fi
 
 shim_exe="C:\\Program Files (x86)\\Steam\\steam.exe"
@@ -1199,27 +1207,30 @@ elif [ "${NOTRECALL_GAME_MODE:-1}" != "0" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}
     needs_rebuild=1
   fi
   if [ "$needs_rebuild" -eq 1 ]; then
-    mkdir -p "$game_app/Contents/MacOS" "$game_app/Contents/Resources"
-    cp -c "$WINELOADER" "$game_app/Contents/MacOS/wine" 2>/dev/null || cp "$WINELOADER" "$game_app/Contents/MacOS/wine"
-    chmod u+w "$game_app/Contents/MacOS/wine" 2>/dev/null || true
-    patch_macho_uuid "$game_app/Contents/MacOS/wine" "io.shreyash.notrecall.game.$app_id"
+    stage_app="$launcher_dir/NotRecallGame.app.tmp.$$"
+    old_app="$launcher_dir/NotRecallGame.app.old.$$"
+    rm -rf "$stage_app" "$old_app"
+    mkdir -p "$stage_app/Contents/MacOS" "$stage_app/Contents/Resources"
+    cp -c "$WINELOADER" "$stage_app/Contents/MacOS/wine" 2>/dev/null || cp "$WINELOADER" "$stage_app/Contents/MacOS/wine"
+    chmod u+w "$stage_app/Contents/MacOS/wine" 2>/dev/null || true
+    patch_macho_uuid "$stage_app/Contents/MacOS/wine" "io.shreyash.notrecall.game.$app_id"
     # Preserve Recall's @loader_path/../lib LC_RPATH from Contents/MacOS/wine.
-    ln -sfn "$nr_runtime/lib" "$game_app/Contents/lib" 2>/dev/null || true
+    ln -sfn "$nr_runtime/lib" "$stage_app/Contents/lib" 2>/dev/null || true
     # CrossOver 26's wine looks for ntdll.so and unix libs right next to itself.
     for f in "$wine_unix"/*; do
       [ -e "$f" ] || continue
       base=${f##*/}
       case "$base" in wine|wine.app) continue ;; esac
-      ln -sfn "$f" "$game_app/Contents/MacOS/$base" 2>/dev/null || true
+      ln -sfn "$f" "$stage_app/Contents/MacOS/$base" 2>/dev/null || true
     done
     # Try building a Dock icon via NotProton's iconmaker if available.
     icon_arg=""
     if [ -x "$np_support/iconmaker" ] && [ -n "$target" ] && [ -f "$target" ]; then
-      if "$np_support/iconmaker" "$target" "$game_app/Contents/Resources/game.icns" >> "$log" 2>&1; then
+      if "$np_support/iconmaker" "$target" "$stage_app/Contents/Resources/game.icns" >> "$log" 2>&1; then
         icon_arg="  <key>CFBundleIconFile</key><string>game</string>"
       fi
     fi
-    cat > "$game_app/Contents/Info.plist" <<PLIST
+    cat > "$stage_app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1258,26 +1269,35 @@ PLIST
     fi
     sign_ok=0
     if [ "$ent_ok" -eq 1 ]; then
-      if /usr/bin/codesign --force --options runtime --sign - --entitlements "$ent_tmp" "$game_app" >> "$log" 2>&1; then
+      if /usr/bin/codesign --force --options runtime --sign - --entitlements "$ent_tmp" "$stage_app" >> "$log" 2>&1; then
         sign_ok=1
-      elif /usr/bin/codesign --force --sign - "$game_app" >> "$log" 2>&1; then
+      elif /usr/bin/codesign --force --sign - "$stage_app" >> "$log" 2>&1; then
         sign_ok=1
       fi
     else
-      if /usr/bin/codesign --force --sign - "$game_app" >> "$log" 2>&1; then
+      if /usr/bin/codesign --force --sign - "$stage_app" >> "$log" 2>&1; then
         sign_ok=1
       fi
     fi
     if [ -n "$ent_tmp" ]; then
       rm -f "$ent_tmp"
     fi
-    touch "$game_app/Contents/MacOS" 2>/dev/null || true
+    touch "$stage_app/Contents/MacOS" 2>/dev/null || true
+    # Atomically swap staged wrapper into place so stale symlinks/icons never linger.
+    [ ! -e "$game_app" ] || mv "$game_app" "$old_app" 2>/dev/null || true
+    if mv "$stage_app" "$game_app" 2>/dev/null; then
+      rm -rf "$old_app" 2>/dev/null || true
+    else
+      [ ! -e "$old_app" ] || mv "$old_app" "$game_app" 2>/dev/null || true
+      rm -rf "$stage_app" 2>/dev/null || true
+      sign_ok=0
+    fi
     if [ "$sign_ok" -eq 1 ]; then
-      printf '%s\n' "$wrapper_stamp" > "$stamp_file.tmp"
-      mv -f "$stamp_file.tmp" "$stamp_file"
+      printf '%s\n' "$wrapper_stamp" > "$stamp_file.tmp.$$"
+      mv -f "$stamp_file.tmp.$$" "$stamp_file"
     else
       echo "=== warning: codesign failed for $game_app; will retry on next launch ===" >> "$log" 2>&1 || true
-      rm -f "$stamp_file" "$stamp_file.tmp"
+      rm -f "$stamp_file" "$stamp_file.tmp.$$"
     fi
     /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Support/lsregister -f "$game_app" >> "$log" 2>&1 || true
   fi
@@ -1304,6 +1324,7 @@ fi
 child_pid=""
 terminated=0
 cleanup() {
+  [ "$terminated" -eq 0 ] || return 0
   terminated=1
   echo "=== termination signal received, shutting down wineserver ===" >> "$log" 2>&1 || true
   "$WINESERVER" -k >> "$log" 2>&1 || true

@@ -1,10 +1,9 @@
 #!/bin/sh
-# Validates shell syntax, VDF manifests, and NotProton plugin schema compliance.
+# Validates shell syntax, Steam VDF manifests, compat/run behavior, and install.sh dry-run.
 set -e
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
-NOTPROTON_DIR="${NOTPROTON_DIR:-$PROJECT_DIR/../NotProton}"
 
 echo "==> Checking POSIX shell syntax (sh -n)"
 for f in \
@@ -28,7 +27,7 @@ echo "    OK: compatibilitytool.vdf & toolmanifest.vdf"
 
 echo "==> Running behavioral tests for compat/run (Overwatch defaults & env contract)"
 test_root=$(mktemp -d)
-trap 'rm -rf "$test_root" "${tmp_validator:-}"' EXIT
+trap 'rm -rf "$test_root"' EXIT
 
 fake_home="$test_root/home"
 fake_runtime="$fake_home/Library/Application Support/notrecall/runtime"
@@ -419,8 +418,22 @@ assert_env "$cfg_env" "MTL_HUD_DISABLE_MENU_BAR=1"
 assert_env "$cfg_env" "WINEMAC_INPUT_VARIANT=precise"
 assert_env_absent "$cfg_env" "WINEMAC_RAW_SOURCE"
 assert_env "$cfg_env" "DXMT_ENABLE_NVEXT=0"
+
+# Regression guard: CRLF, surrounding whitespace, disallowed keys, and invalid FPS/sharpness values.
+printf '  MTL_HUD_ENABLED = 1 \r\nNOTRECALL_FPS_LIMIT=144;evil=1\r\nUNSAFE_KEY=boom\r\n' > "$fake_home/Library/Application Support/notrecall/settings.env"
+cfg_hard_env="$test_root/cfg_hard.env"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$cfg_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_ENV_OUT="$cfg_hard_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+assert_env "$cfg_hard_env" "MTL_HUD_ENABLED=1"
+assert_env_absent "$cfg_hard_env" "UNSAFE_KEY"
+! grep -Fq "preferredMaxFrameRate=144;evil=1" "$cfg_hard_env"
 rm -f "$fake_home/Library/Application Support/notrecall/settings.env"
-echo "    OK: settings.env global/per-game loading and explicit env override precedence"
+echo "    OK: settings.env global/per-game loading, CRLF/allowlist hardening, and env override precedence"
 
 
 
