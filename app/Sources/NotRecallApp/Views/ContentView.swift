@@ -40,6 +40,10 @@ struct ContentView: View {
                     prerequisiteCallout
                 }
 
+                if !state.healthWarnings.isEmpty {
+                    healthWarningsCallout
+                }
+
                 GroupBox("Environment Checks") {
                     VStack(alignment: .leading, spacing: 8) {
                         statusRow("Rosetta 2", ok: state.rosettaInstalled, detail: state.rosettaInstalled ? "Installed" : "Required to run x86_64 Wine on Apple Silicon")
@@ -184,6 +188,25 @@ struct ContentView: View {
                 if !state.notProtonBridgeReady {
                     Button("Open NotProton") { state.openNotProton() }
                         .controlSize(.small)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private var healthWarningsCallout: some View {
+        GroupBox("Pre-Match System Health") {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(state.healthWarnings) { warning in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: warning.isCritical ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(warning.isCritical ? .red : .orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(warning.title).font(.subheadline.weight(.medium))
+                            Text(warning.detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
                 }
             }
             .padding(.vertical, 2)

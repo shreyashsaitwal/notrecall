@@ -25,9 +25,17 @@ struct ShaderCacheEntry: Identifiable, Hashable, Sendable {
     }
 }
 
+struct HealthWarning: Identifiable, Hashable, Sendable {
+    let id: String
+    let title: String
+    let detail: String
+    let isCritical: Bool
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var rosettaInstalled = false
+    @Published var macOSSupported = true
     @Published var steamAppURL: URL?
     @Published var notProtonAppURL: URL?
     @Published var notProtonBridgeReady = false
@@ -38,6 +46,7 @@ final class AppState: ObservableObject {
     @Published var steamToolInstalled = false
     @Published var pluginInstalled = false
     @Published var helpersInstalled = false
+    @Published var healthWarnings: [HealthWarning] = []
 
     @Published var steamLibraryCount = 0
     @Published var shaderCaches: [ShaderCacheEntry] = []
@@ -62,7 +71,9 @@ final class AppState: ObservableObject {
 
     func refresh(preserveLog: Bool = false) async {
         let fm = FileManager.default
-        rosettaInstalled = fm.fileExists(atPath: "/Library/Apple/usr/share/rosetta/rosetta")
+        macOSSupported = ProcessInfo.processInfo.isOperatingSystemAtLeast(
+            OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 0)
+        )
         steamAppURL = Self.detectApp(named: "Steam.app", home: home)
         notProtonAppURL = Self.detectApp(named: "NotProton.app", home: home)
         notProtonBridgeReady = fm.fileExists(atPath: notProtonSupport.appending(path: "bridge").path)
@@ -76,18 +87,23 @@ final class AppState: ObservableObject {
 
         let libraries = Self.discoverSteamLibraries(home: home)
         steamLibraryCount = libraries.count
+        let osOK = macOSSupported
 
-        let scanResult = await Task.detached { () -> ([ShaderCacheEntry], String, String) in
+        let scanResult = await Task.detached { () -> (Bool, [HealthWarning], [ShaderCacheEntry], String, String) in
+            let rosetta = Self.probeRosetta()
+            let warnings = Self.collectHealthWarnings(macOSSupported: osOK, libraries: libraries)
             let names = Self.loadSteamAppNames(across: libraries)
             let caches = Self.scanShaderCaches(across: libraries, appNames: names)
             let (logTitle, logText) = Self.loadLatestLog(across: libraries, appNames: names)
-            return (caches, logTitle, logText)
+            return (rosetta, warnings, caches, logTitle, logText)
         }.value
 
-        shaderCaches = scanResult.0
+        rosettaInstalled = scanResult.0
+        healthWarnings = scanResult.1
+        shaderCaches = scanResult.2
         if !preserveLog {
-            recentLogTitle = scanResult.1
-            recentLogText = scanResult.2
+            recentLogTitle = scanResult.3
+            recentLogText = scanResult.4
         }
     }
 
@@ -258,9 +274,10 @@ final class AppState: ObservableObject {
         NotRecall Diagnostics
         =====================
         App Version:        \(appVersion)
-        macOS:              \(osVersion)
+        macOS:              \(osVersion) (\(macOSSupported ? ">=26.5 ok" : "<26.5 unsupported"))
         Hardware:           \(chip)
-        Rosetta 2:          \(rosettaInstalled ? "installed" : "missing")
+        Rosetta 2:          \(rosettaInstalled ? "verified (arch -x86_64)" : "missing")
+        Health Warnings:    \(healthWarnings.isEmpty ? "none" : healthWarnings.map(\.id).joined(separator: ", "))
         Steam.app:          \(steamAppURL?.path ?? "missing")
         Steam Libraries:    \(steamLibraryCount)
         NotProton Bridge:   \(notProtonBridgeReady ? "ready" : "missing")
@@ -300,6 +317,90 @@ final class AppState: ObservableObject {
             }
         }
         return nil
+    }
+
+    nonisolated private static func probeRosetta() -> Bool {
+        let proc = Process()
+        proc.executableURL = URL(filePath: "/usr/bin/arch")
+        proc.arguments = ["-x86_64", "/usr/bin/true"]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            return proc.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    nonisolated private static func memoryPressureLevel() -> Int32 {
+        var level: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 else {
+            return 1
+        }
+        return level
+    }
+
+    nonisolated private static func collectHealthWarnings(macOSSupported: Bool, libraries: [URL]) -> [HealthWarning] {
+        var warnings: [HealthWarning] = []
+        if !macOSSupported {
+            warnings.append(HealthWarning(
+                id: "macos_version",
+                title: "macOS 26.5 or newer recommended",
+                detail: "Overwatch requires Rosetta fixes from macOS 26.5+; older releases may hang before opening.",
+                isCritical: true
+            ))
+        }
+        let info = ProcessInfo.processInfo
+        if info.isLowPowerModeEnabled {
+            warnings.append(HealthWarning(
+                id: "low_power_mode",
+                title: "Low Power Mode is enabled",
+                detail: "Disable Low Power Mode in System Settings → Battery for full CPU/GPU clocks in Overwatch.",
+                isCritical: false
+            ))
+        }
+        if info.thermalState == .serious || info.thermalState == .critical {
+            warnings.append(HealthWarning(
+                id: "thermal_throttling",
+                title: "Mac is thermally throttling",
+                detail: "macOS is reducing clocks to cool down. Close heavy background apps or improve airflow before queuing.",
+                isCritical: info.thermalState == .critical
+            ))
+        }
+        let pressure = memoryPressureLevel()
+        if pressure >= 2 {
+            warnings.append(HealthWarning(
+                id: "memory_pressure",
+                title: pressure >= 4 ? "Critical memory pressure" : "High memory pressure",
+                detail: "Close memory-heavy apps (or restart if up for days) to avoid input lag and stutters in Overwatch.",
+                isCritical: pressure >= 4
+            ))
+        }
+        let fm = FileManager.default
+        let cutoff = Date().addingTimeInterval(-86400)
+        for steamapps in libraries {
+            let gpuDir = steamapps.appending(path: "compatdata/2357570/gpu-reports")
+            guard let files = try? fm.contentsOfDirectory(at: gpuDir, includingPropertiesForKeys: [.contentModificationDateKey]) else { continue }
+            let recentHang = files.first { url in
+                guard url.lastPathComponent.hasPrefix("gpu-"), url.pathExtension == "json" else { return false }
+                let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                guard mtime >= cutoff, let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+                return text.contains("\"gpu_lost\":true") || text.contains("\"hang\"") || text.contains("\"exit_reason\"")
+            }
+            if recentHang != nil {
+                warnings.append(HealthWarning(
+                    id: "recent_gpu_hang",
+                    title: "Recent Overwatch GPU hang detected",
+                    detail: "macOS terminated Overwatch's GPU context in a recent session. Consider rebuilding shaders or lowering Shader Pack Memory Budget.",
+                    isCritical: false
+                ))
+                break
+            }
+        }
+        return warnings
     }
 
     nonisolated private static func hardwareBrandString() -> String {
