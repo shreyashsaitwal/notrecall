@@ -463,6 +463,144 @@ stage_metalfx_nvngx() {
 }
 stage_metalfx_nvngx
 
+# Sync Overwatch's Settings_v0.ini ([GPU.*] & [Render.13] HighQualityUpsample)
+# so toggling MetalFX/DLSS doesn't make Overwatch think the GPU changed and reset video settings.
+sync_overwatch_metalfx_settings() {
+  is_overwatch_launch || return 0
+  [ -n "${WINEPREFIX:-}" ] && [ -n "${STEAM_COMPAT_DATA_PATH:-}" ] || return 0
+  [ -x /usr/bin/perl ] || return 0
+  settings_ini="$WINEPREFIX/drive_c/users/steamuser/Documents/Overwatch/Settings/Settings_v0.ini"
+  [ -f "$settings_ini" ] && [ ! -L "$settings_ini" ] || return 0
+
+  metalfx_on=0
+  [ "${DXMT_ENABLE_NVEXT:-0}" = "1" ] && metalfx_on=1
+  mac_gpu="${NOTRECALL_TEST_GPU_NAME:-}"
+  if [ "$metalfx_on" -eq 0 ] && [ -z "$mac_gpu" ] && [ -x "$nr_helpers/notrecall-sysinfo" ]; then
+    mac_gpu=$("$nr_helpers/notrecall-sysinfo" gpu-name 2>/dev/null || true)
+  fi
+  backup_ini="$STEAM_COMPAT_DATA_PATH/Settings_v0.before-gpu-sync.ini"
+
+  /usr/bin/perl -e '
+    my ($path, $backup, $metalfx, $mac_gpu) = @ARGV;
+    my $size = -s $path;
+    exit 0 if !defined $size || $size > 1048576;
+    open my $in, "<:raw", $path or exit 0;
+    local $/;
+    my $orig = <$in>;
+    close $in;
+    exit 0 if !defined $orig;
+    my $nl = ($orig =~ /\r\n/) ? "\r\n" : "\n";
+    my @lines = split(/\Q$nl\E/, $orig, -1);
+
+    my $find_section = sub {
+      my ($prefix) = @_;
+      my ($s, $e) = (-1, scalar(@lines));
+      for my $i (0 .. $#lines) {
+        (my $t = $lines[$i]) =~ s/^\s+|\s+$//g;
+        if ($s < 0 && index($t, $prefix) == 0) {
+          $s = $i + 1;
+        } elsif ($s >= 0 && $t =~ /^\[/) {
+          return (-1, -1) if index($t, $prefix) == 0;
+          $e = $i if $e == scalar(@lines);
+        }
+      }
+      return ($s, $e);
+    };
+
+    my $find_key = sub {
+      my ($s, $e, $key) = @_;
+      for my $i ($s .. $e - 1) {
+        (my $t = $lines[$i]) =~ s/^\s+|\s+$//g;
+        if ($t =~ /^\Q$key\E\s*=/) {
+          return $i;
+        }
+      }
+      return -1;
+    };
+
+    my $changed = 0;
+    my %card;
+    my $apply_card = 0;
+    if ($metalfx eq "1") {
+      $apply_card = 1;
+      %card = (
+        GPUName             => "NVIDIA GeForce RTX 4090",
+        GPUVenderID         => "4318",
+        LastUsedGPUVendorID => "4318",
+        GPUDeviceID         => "9860",
+        LastUsedGPUDeviceID => "9860",
+      );
+    } elsif (length $mac_gpu) {
+      $apply_card = 1;
+      %card = (
+        GPUName             => $mac_gpu,
+        GPUVenderID         => "4203",
+        LastUsedGPUVendorID => "4203",
+        GPUDeviceID         => undef,
+        LastUsedGPUDeviceID => undef,
+      );
+    }
+
+    if ($apply_card) {
+      my ($gs, $ge) = $find_section->("[GPU.");
+      if ($gs >= 0) {
+        my $last = $gs;
+        for my $i ($gs .. $ge - 1) {
+          $last = $i + 1 if $lines[$i] =~ /\S/;
+        }
+        for my $k (sort keys %card) {
+          my $idx = $find_key->($gs, $ge, $k);
+          my $val = $card{$k};
+          my $line = defined($val) ? "$k = \"$val\"" : undef;
+          if ($idx >= 0 && defined($line)) {
+            if ($lines[$idx] ne $line) {
+              $lines[$idx] = $line;
+              $changed = 1;
+            }
+          } elsif ($idx >= 0 && !defined($line)) {
+            splice(@lines, $idx, 1);
+            $ge--;
+            $last-- if $last > $idx;
+            $changed = 1;
+          } elsif ($idx < 0 && defined($line)) {
+            splice(@lines, $last, 0, $line);
+            $last++;
+            $ge++;
+            $changed = 1;
+          }
+        }
+      }
+    }
+
+    if ($metalfx ne "1") {
+      my ($rs, $re) = $find_section->("[Render.13]");
+      if ($rs >= 0) {
+        my $idx = $find_key->($rs, $re, "HighQualityUpsample");
+        if ($idx >= 0 && $lines[$idx] =~ /=\s*"3"\s*$/) {
+          splice(@lines, $idx, 1);
+          $changed = 1;
+        }
+      }
+    }
+
+    exit 0 if !$changed;
+    if (!-f $backup) {
+      if (open my $bf, ">:raw", "$backup.tmp.$$") {
+        print $bf $orig;
+        close $bf;
+        rename "$backup.tmp.$$", $backup;
+      }
+    }
+    my $updated = join($nl, @lines);
+    my $tmp = "$path.nr-tmp.$$";
+    open my $out, ">:raw", $tmp or exit 0;
+    print $out $updated;
+    close $out or do { unlink $tmp; exit 0; };
+    rename $tmp, $path or unlink $tmp;
+  ' "$settings_ini" "$backup_ini" "$metalfx_on" "$mac_gpu" >> "$log" 2>&1 || true
+}
+sync_overwatch_metalfx_settings
+
 # Match Recall's explicit DXMT & MetalFX WINEDLLOVERRIDES contract.
 vc_overrides=$(native_vc_runtime)
 if [ "${DXMT_ENABLE_NVEXT:-0}" = "1" ]; then
