@@ -28,6 +28,16 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+SWIFT_ERR_LOG=""
+ICONSET_DIR=""
+DMG_STAGE=""
+cleanup_package_tmp() {
+  [ -z "$SWIFT_ERR_LOG" ] || rm -f "$SWIFT_ERR_LOG" 2>/dev/null || true
+  [ -z "$ICONSET_DIR" ]   || rm -rf "$ICONSET_DIR" 2>/dev/null || true
+  [ -z "$DMG_STAGE" ]     || rm -rf "$DMG_STAGE" 2>/dev/null || true
+}
+trap cleanup_package_tmp EXIT
+
 mkdir -p "$OUT_DIR/helpers"
 
 # Build notrecall-sysinfo if missing or older than its source.
@@ -97,16 +107,17 @@ fi
 # Generate AppIcon.icns if app/Resources/AppIcon.png is provided.
 APP_ICON_PNG="$PROJECT_DIR/app/Resources/AppIcon.png"
 if [ -f "$APP_ICON_PNG" ]; then
-  iconset="$OUT_DIR/AppIcon.iconset"
-  rm -rf "$iconset"
-  mkdir -p "$iconset"
+  ICONSET_DIR="$OUT_DIR/AppIcon.iconset"
+  rm -rf "$ICONSET_DIR"
+  mkdir -p "$ICONSET_DIR"
   for sz in 16 32 128 256 512; do
     sz2=$((sz * 2))
-    /usr/bin/sips -z "$sz" "$sz" "$APP_ICON_PNG" --out "$iconset/icon_${sz}x${sz}.png" >/dev/null
-    /usr/bin/sips -z "$sz2" "$sz2" "$APP_ICON_PNG" --out "$iconset/icon_${sz}x${sz}@2x.png" >/dev/null
+    /usr/bin/sips -z "$sz" "$sz" "$APP_ICON_PNG" --out "$ICONSET_DIR/icon_${sz}x${sz}.png" >/dev/null
+    /usr/bin/sips -z "$sz2" "$sz2" "$APP_ICON_PNG" --out "$ICONSET_DIR/icon_${sz}x${sz}@2x.png" >/dev/null
   done
-  /usr/bin/iconutil -c icns "$iconset" -o "$RES_DIR/AppIcon.icns"
-  rm -rf "$iconset"
+  /usr/bin/iconutil -c icns "$ICONSET_DIR" -o "$RES_DIR/AppIcon.icns"
+  rm -rf "$ICONSET_DIR"
+  ICONSET_DIR=""
 fi
 
 icon_plist=""

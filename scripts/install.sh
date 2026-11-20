@@ -128,6 +128,9 @@ cleanup_all() {
     rmdir "$DMG_MOUNT" 2>/dev/null || true
   fi
   rm -rf "$STAGE_RUNTIME" 2>/dev/null || true
+  if [ -e "$NR_SUPPORT/runtime" ] && [ -e "$OLD_RUNTIME" ]; then
+    rm -rf "$OLD_RUNTIME" 2>/dev/null || true
+  fi
 }
 trap cleanup_all EXIT
 
@@ -235,22 +238,26 @@ find_helper_bin() {
   else
     search_dirs="$RECALL_HELPERS_DIR|$HELPERS_SRC|$PROJECT_DIR/helpers|$PROJECT_DIR/build/helpers|/Applications/Recall.app/Contents/Helpers|/Applications/Recall.app/Contents/MacOS|$HOME/Applications/Recall.app/Contents/Helpers|$RUNTIME_SRC/../helpers"
   fi
+  set -f
   old_ifs=$IFS; IFS='|'
   for candidate in $search_dirs; do
     [ -n "$candidate" ] || continue
     if [ -x "$candidate/$bin_name" ]; then
       IFS=$old_ifs
+      set +f
       printf '%s' "$candidate/$bin_name"
       return 0
     fi
     # Recall ships portable_pipeline.swift as Contents/Helpers/ow2-pipeline.
     if [ "$bin_name" = "portable-pipeline" ] && [ -x "$candidate/ow2-pipeline" ]; then
       IFS=$old_ifs
+      set +f
       printf '%s' "$candidate/ow2-pipeline"
       return 0
     fi
   done
   IFS=$old_ifs
+  set +f
   return 1
 }
 
@@ -358,9 +365,13 @@ if [ "$DRY_RUN" -eq 0 ]; then
   # Record the installed Recall release metadata & copy licenses when extracted from Recall.app.
   if [ -n "$RECALL_APP_SRC" ]; then
     if [ -f "$RECALL_APP_SRC/Contents/Resources/release.json" ]; then
-      cp -f "$RECALL_APP_SRC/Contents/Resources/release.json" "$NR_SUPPORT/recall-release.json"
+      cp -f "$RECALL_APP_SRC/Contents/Resources/release.json" "$NR_SUPPORT/recall-release.json.tmp.$$" && \
+        mv -f "$NR_SUPPORT/recall-release.json.tmp.$$" "$NR_SUPPORT/recall-release.json"
     elif [ -n "$RECALL_APP_VERSION" ]; then
-      printf '{"appVersion":"%s","runtimeVersion":"%s"}\n' "$RECALL_APP_VERSION" "$RECALL_RUNTIME_VERSION" > "$NR_SUPPORT/recall-release.json"
+      printf '{"appVersion":"%s","runtimeVersion":"%s"}\n' "$RECALL_APP_VERSION" "$RECALL_RUNTIME_VERSION" > "$NR_SUPPORT/recall-release.json.tmp.$$" && \
+        mv -f "$NR_SUPPORT/recall-release.json.tmp.$$" "$NR_SUPPORT/recall-release.json"
+    else
+      rm -f "$NR_SUPPORT/recall-release.json"
     fi
     if [ -d "$RECALL_APP_SRC/Contents/Resources/Licenses" ]; then
       rm -rf "$NR_SUPPORT/licenses/recall"
@@ -370,6 +381,8 @@ if [ "$DRY_RUN" -eq 0 ]; then
         [ -f "$RECALL_APP_SRC/Contents/Resources/$notice" ] && cp -f "$RECALL_APP_SRC/Contents/Resources/$notice" "$NR_SUPPORT/licenses/recall/$notice"
       done
     fi
+  else
+    rm -f "$NR_SUPPORT/recall-release.json"
   fi
 else
   if [ "$FORCE_PATCH_NTDLL" -eq 1 ]; then

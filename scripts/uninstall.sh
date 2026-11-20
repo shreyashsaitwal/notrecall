@@ -1,20 +1,29 @@
 #!/bin/sh
-# Removes the notrecall-proton Steam compatibility tool, NotProton plugin,
-# and staged runtime without deleting any Steam game prefixes or saves.
+# Removes the notrecall-proton Steam compatibility tool, staged runtime/settings,
+# downloaded Recall DMG cache, and any legacy NotProton plugin without deleting
+# Steam game prefixes or saves.
 set -e
 
 NP_SUPPORT="${NOTPROTON_SUPPORT:-$HOME/Library/Application Support/notproton}"
 NR_SUPPORT="$HOME/Library/Application Support/notrecall"
+NR_CACHE="$HOME/Library/Caches/notrecall"
 TOOL_DST="$HOME/Library/Application Support/Steam/compatibilitytools.d/notrecall-proton"
-PLUGIN_DST="$NP_SUPPORT/plugins/50-notrecall.conf"
+LEGACY_PLUGIN_DST="$NP_SUPPORT/plugins/50-notrecall.conf"
 
 echo "==> Removing Steam compatibility tool: $TOOL_DST"
 rm -rf "$TOOL_DST"
 
-echo "==> Removing NotProton plugin: $PLUGIN_DST"
-rm -f "$PLUGIN_DST"
+if [ -e "$LEGACY_PLUGIN_DST" ] || [ -L "$LEGACY_PLUGIN_DST" ]; then
+  echo "==> Removing legacy NotProton plugin: $LEGACY_PLUGIN_DST"
+  rm -f "$LEGACY_PLUGIN_DST"
+fi
 
-echo "==> Removing staged runtime & launchers: $NR_SUPPORT"
+echo "==> Removing staged runtime, launchers & settings: $NR_SUPPORT"
 rm -rf "$NR_SUPPORT"
+
+if [ -d "$NR_CACHE" ]; then
+  echo "==> Removing downloaded Recall cache: $NR_CACHE"
+  rm -rf "$NR_CACHE"
+fi
 
 echo "Uninstall complete. Restart Steam to refresh the compatibility tool list."
