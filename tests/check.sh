@@ -469,8 +469,26 @@ assert_env "$np_env" "WINEMAC_INPUT_VARIANT=precise"
 assert_env "$np_env" "WINEMAC_RAW_SOURCE=hid"
 grep -Fq "d3d11.metalfxSharpness=0.8" "$np_env"
 grep -Fq "d3d11.preferredMaxFrameRate=120" "$np_env"
+
+# Verify recovery toggles (NOTPROTON_NOTRECALL_REBUILD_SHADERS & NOTPROTON_NOTRECALL_RESET_DISPLAY) & BT mic toggle.
+mkdir -p "$cfg_data/notrecall-cache/cache/pipelines/ns/archives"
+: > "$cfg_data/notrecall-cache/cache/pipelines/ns/archive.json"
+: > "$cfg_data/notrecall-display.state"
+rec_env="$test_root/rec_plugin.env"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$cfg_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTPROTON_NOTRECALL_REBUILD_SHADERS=1 \
+  NOTPROTON_NOTRECALL_RESET_DISPLAY=1 \
+  NOTPROTON_NOTRECALL_DISABLE_BT_MIC_FIX=1 \
+  NOTRECALL_TEST_DISPLAY_INFO="monA-1-1 1920 1080 144 3840 2160" \
+  TEST_ENV_OUT="$rec_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+[ ! -f "$cfg_data/notrecall-cache/cache/pipelines/ns/archive.json" ]
+assert_env "$rec_env" "NOTRECALL_BT_MIC_FIX=0"
 rm -f "$fake_home/Library/Application Support/notrecall/settings.env"
-echo "    OK: NotProton adopted plugin env translation and precedence"
+echo "    OK: NotProton adopted plugin env translation, recovery toggles, and precedence"
 
 echo "==> Testing scripts/install.sh --dry-run against a mock Recall.app bundle"
 mock_recall_dir=$(mktemp -d)

@@ -134,9 +134,12 @@ load_notproton_plugin_env() {
   [ "${NOTPROTON_NOTRECALL_NO_PRECOMPILE:-}" = "1" ]     && [ -z "${NOTRECALL_SKIP_PRECOMPILE+1}" ]  && export NOTRECALL_SKIP_PRECOMPILE=1
   [ "${NOTPROTON_NOTRECALL_RAW_CONTROLLERS:-}" = "1" ]   && [ -z "${NOTRECALL_RAW_CONTROLLERS+1}" ]  && export NOTRECALL_RAW_CONTROLLERS=1
   [ "${NOTPROTON_NOTRECALL_DISABLE_MSYNC:-}" = "1" ]     && [ -z "${WINEMSYNC+1}" ]                  && export WINEMSYNC=0
+  [ "${NOTPROTON_NOTRECALL_DISABLE_BT_MIC_FIX:-}" = "1" ] && [ -z "${NOTRECALL_BT_MIC_FIX+1}" ]      && export NOTRECALL_BT_MIC_FIX=0
   [ "${NOTPROTON_NOTRECALL_LOG_CRASHES:-}" = "1" ]       && [ -z "${NOTRECALL_LOG_CRASHES+1}" ]      && export NOTRECALL_LOG_CRASHES=1
   [ "${NOTPROTON_NOTRECALL_LOG_GRAPHICS:-}" = "1" ]      && [ -z "${NOTRECALL_LOG_GRAPHICS+1}" ]     && export NOTRECALL_LOG_GRAPHICS=1
   [ "${NOTPROTON_NOTRECALL_LOG_MOUSE:-}" = "1" ]         && [ -z "${NOTRECALL_LOG_MOUSE+1}" ]        && export NOTRECALL_LOG_MOUSE=1
+  [ "${NOTPROTON_NOTRECALL_REBUILD_SHADERS:-}" = "1" ]   && [ -z "${NOTRECALL_REBUILD_SHADERS+1}" ]  && export NOTRECALL_REBUILD_SHADERS=1
+  [ "${NOTPROTON_NOTRECALL_RESET_DISPLAY:-}" = "1" ]     && [ -z "${NOTRECALL_RESET_DISPLAY+1}" ]    && export NOTRECALL_RESET_DISPLAY=1
 
   [ -n "${NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS:-}" ] && [ -z "${NOTRECALL_METALFX_SHARPNESS+1}" ] && export NOTRECALL_METALFX_SHARPNESS="$NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS"
   [ -n "${NOTPROTON_ENV_NOTRECALL_MOUSE_MODE:-}" ]        && [ -z "${NOTRECALL_MOUSE_MODE+1}" ]        && export NOTRECALL_MOUSE_MODE="$NOTPROTON_ENV_NOTRECALL_MOUSE_MODE"
@@ -651,6 +654,10 @@ EOF
   seed_marker="$STEAM_COMPAT_DATA_PATH/.notrecall-ow-baseline-seeded"
   backup_ini="$STEAM_COMPAT_DATA_PATH/Settings_v0.before-baseline.ini"
   mkdir -p "$settings_dir" 2>/dev/null || return 0
+  if [ "${NOTRECALL_RESET_DISPLAY:-0}" = "1" ]; then
+    echo "=== NOTRECALL_RESET_DISPLAY=1; resetting Overwatch display state and resolution ===" >> "$log" 2>&1 || true
+    rm -f -- "$state_file" "$seed_marker" 2>/dev/null || true
+  fi
 
   if [ ! -L "$settings_ini" ]; then
     dims=$(/usr/bin/perl -e '
@@ -1135,8 +1142,8 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   export DXMT_GPU_REPORT="${DXMT_GPU_REPORT:-$STEAM_COMPAT_DATA_PATH/gpu-reports}"
   export DXMT_PIPELINE_CACHE_NAMESPACE="${NOTRECALL_PIPELINE_NAMESPACE:-ow2-source-v1}"
   mkdir -p "$DXMT_PIPELINE_CACHE_PATH" "$DXMT_SHADER_CACHE_PATH" "$DXMT_GPU_REPORT"
-  # Honor per-game Rebuild Shaders marker created by NotRecall.app.
-  if [ -f "$cache_root/cache/rebuild-shaders" ]; then
+  # Honor per-game Rebuild Shaders marker (NotRecall.app) or env toggle (Steam Compatibility UI).
+  if [ -f "$cache_root/cache/rebuild-shaders" ] || [ "${NOTRECALL_REBUILD_SHADERS:-0}" = "1" ]; then
     echo "=== rebuild-shaders requested; clearing compiled shader archives and metadata ===" >> "$log" 2>&1 || true
     if [ -n "${DXMT_PIPELINE_CACHE_PATH:-}" ] && [ -d "$DXMT_PIPELINE_CACHE_PATH" ]; then
       for dir in "$DXMT_PIPELINE_CACHE_PATH"/*; do
