@@ -232,6 +232,9 @@ def wine_patches_digest(recall_dir: Path) -> str:
         h.update(rel.encode())
         h.update(b'\0')
         h.update(p.read_bytes())
+    # Include overlay build-flag & signing-contract changes so cache and NotRecall.app
+    # detect rebuilds even when upstream Recall patch files are unchanged.
+    h.update(b'winemac:HAVE_MTLDEVICE_REGISTRYID=1\0wineserver:no-dyld-env\0')
     return h.hexdigest()
 
 
@@ -316,7 +319,15 @@ def build_recall_wine_overlays(recall_dir: Path, work: Path, stage: Path, runtim
                 for d in RECALL_WINE_SRC_DIRS:
                     cmd = cmd.replace(str(wine_src / d) + '/', str(src_copy / d) + '/')
                     cmd = cmd.replace('-I' + str(wine_src / d) + ' ', '-I' + str(src_copy / d) + ' ')
-                _shell(cmd + prefix_map, name + '.o')
+                extra_flags = ''
+                if name == 'dlls/winemac.drv/cocoa_display':
+                    # Phase 2 configure runs Objective-C probes with xcrun gcc under Rosetta,
+                    # which fails to load arm64-only libxcrun.dylib and leaves
+                    # HAVE_MTLDEVICE_REGISTRYID undefined. Without it, macdrv_get_gpus falls
+                    # back to IOPCIDevice (0 GPUs on Apple Silicon) and lock_display_devices
+                    # loops forever with 'Failed to read display config.'.
+                    extra_flags = ' -DHAVE_MTLDEVICE_REGISTRYID=1'
+                _shell(cmd + extra_flags + prefix_map, name + '.o')
 
             with ThreadPoolExecutor(max_workers=6) as pool:
                 list(pool.map(_compile_obj, obj_names))
@@ -327,6 +338,11 @@ def build_recall_wine_overlays(recall_dir: Path, work: Path, stage: Path, runtim
             for name in obj_names:
                 link = re.sub(re.escape(name) + r'\.o\b', str(comp_obj / (name + '.o')), link)
             _shell(link, dest_rel)
+            if dest_rel == 'lib/wine/x86_64-unix/winemac.so':
+                syms = subprocess.check_output(['/usr/bin/nm', '-u', str(raw)], text=True)
+                for sym in ('_MTLCopyAllDevices', '_CGDirectDisplayCopyCurrentMetalDevice'):
+                    if sym not in syms:
+                        raise RuntimeError(f'winemac.so missing Metal GPU symbol {sym} (HAVE_MTLDEVICE_REGISTRYID not active)')
             copy_entry(raw, stage / dest_rel)
 
         # 2. Synthesized winemacmf.dll (PE, from mfh264enc template).
@@ -557,8 +573,8 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
     for p in native:
         derive_runtime.restamp(p, min_ver)
 
-    entitlements = runtime_out / '.wine-entitlements.plist'
-    entitlements.write_bytes(plistlib.dumps({
+    wine_entitlements = runtime_out / '.wine-entitlements.plist'
+    wine_entitlements.write_bytes(plistlib.dumps({
         'com.apple.security.cs.allow-dyld-environment-variables': True,
         'com.apple.security.cs.allow-jit': True,
         'com.apple.security.cs.allow-unsigned-executable-memory': True,
@@ -566,9 +582,23 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
         'com.apple.security.cs.disable-library-validation': True,
         'com.apple.security.device.audio-input': True,
     }))
+    # wineserver daemonizes via fork() without exec(); allowing DYLD_INSERT_LIBRARIES
+    # injects Steam's overlay-shim into wineserver and leaks Mach ports on fork.
+    server_entitlements = runtime_out / '.wineserver-entitlements.plist'
+    server_entitlements.write_bytes(plistlib.dumps({
+        'com.apple.security.cs.allow-jit': True,
+        'com.apple.security.cs.allow-unsigned-executable-memory': True,
+        'com.apple.security.cs.disable-executable-page-protection': True,
+        'com.apple.security.cs.disable-library-validation': True,
+    }))
     try:
         for p in sorted(native):
-            ent = entitlements if p.name in ('wine', 'wineserver') else None
+            if p.name == 'wine':
+                ent = wine_entitlements
+            elif p.name == 'wineserver':
+                ent = server_entitlements
+            else:
+                ent = None
             sign_macho(p, identity, ent)
 
         # Create Overwatch.app Game Mode bundle using Recall's game_mode_app.py.
@@ -577,9 +607,10 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
         if identity == '-':
             # Re-sign ad-hoc without Hardened Runtime (--options runtime) to avoid
             # CS_ADHOC|CS_RUNTIME restrictions on Rosetta/Wine threads.
-            sign_macho(stage / game_mode_app.BUNDLE, identity, entitlements)
+            sign_macho(stage / game_mode_app.BUNDLE, identity, wine_entitlements)
     finally:
-        entitlements.unlink(missing_ok=True)
+        wine_entitlements.unlink(missing_ok=True)
+        server_entitlements.unlink(missing_ok=True)
 
     manifest = {
         'schema': 1,

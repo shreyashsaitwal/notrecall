@@ -1503,9 +1503,9 @@ cleanup() {
 trap cleanup TERM INT HUP
 
 {
-  echo "=== launching: $launch_wine $shim_exe $* ==="
-  echo "DXMT_CONFIG_FILE=${DXMT_CONFIG_FILE:-} DXMT_CONFIG=${DXMT_CONFIG:-}"
-  echo "WINEMAC_MOUSELOOK=${WINEMAC_MOUSELOOK:-} WINEMAC_RAW_SOURCE=${WINEMAC_RAW_SOURCE:-} WINEMAC_MOUSELOOK_RAW_INTERVAL_US=${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-}"
+  printf '%s\n' "=== launching: $launch_wine $shim_exe $* ==="
+  printf '%s\n' "DXMT_CONFIG_FILE=${DXMT_CONFIG_FILE:-} DXMT_CONFIG=${DXMT_CONFIG:-}"
+  printf '%s\n' "WINEMAC_MOUSELOOK=${WINEMAC_MOUSELOOK:-} WINEMAC_RAW_SOURCE=${WINEMAC_RAW_SOURCE:-} WINEMAC_MOUSELOOK_RAW_INTERVAL_US=${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-}"
 } >> "$log" 2>&1 || true
 
 (
