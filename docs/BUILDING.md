@@ -1,6 +1,6 @@
 # Building NotRecall from Source
 
-NotRecall builds as a lightweight (~1–2 MB) macOS SwiftUI app and Steam compatibility tool. Rather than compiling Wine, DXMT, and Apple GPTK from source, `NotRecall.app` downloads official signed [Recall](https://github.com/AsherJN/recall/releases) releases directly from GitHub, verifies their SHA-256 and code signature, and extracts `runtime.tar.gz` plus the 4 offline shader pipeline helpers (`ow2-pipeline` → `portable-pipeline`, `pipeline-prepare`, `pipeline-warm`, `libpipeline_prepare.dylib`).
+NotRecall builds as a lightweight (~1–2 MB) macOS SwiftUI app and Steam compatibility tool. Rather than compiling Wine, DXMT, and Apple GPTK from source, `NotRecall.app` downloads official signed [Recall](https://github.com/AsherJN/recall/releases) releases directly from GitHub, verifies their SHA-256 and code signature, and extracts `runtime.tar.gz` plus the 4 offline shader pipeline helpers (`ow2-pipeline`, `pipeline-prepare`, `pipeline-warm`, `libpipeline_prepare.dylib`).
 
 ## Prerequisites
 

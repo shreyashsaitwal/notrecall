@@ -1130,7 +1130,7 @@ if [ -n "$exe_name" ] && [ "$mouse_mode" != "off" ]; then
 fi
 
 # Per-game DXMT shader pipeline cache path.
-# Namespace defaults to ow2-source-v1 to match stock portable-pipeline; per-game
+# Namespace defaults to ow2-source-v1 to match stock ow2-pipeline; per-game
 # isolation is already guaranteed by DXMT_PIPELINE_CACHE_PATH under compatdata/<appid>.
 cache_root=""
 if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
@@ -1368,7 +1368,6 @@ if [ "$prefix_locked" -eq 1 ]; then exec 8>&-; prefix_locked=0; fi
 
 # 8. Pre-launch shader pipeline consolidate & warm.
 pipeline_hook="$nr_helpers/pipeline_hook.sh"
-[ ! -x "$pipeline_hook" ] && [ -x "$tool_dir/pipeline_hook.sh" ] && pipeline_hook="$tool_dir/pipeline_hook.sh"
 if [ -n "$cache_root" ] && [ -x "$pipeline_hook" ]; then
   "$pipeline_hook" pre "$cache_root" "${game_app:-$launch_wine}" "$log" || true
 fi

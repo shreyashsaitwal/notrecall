@@ -1,8 +1,6 @@
 /* Lightweight native macOS system probe for notrecall compat/run.
  * Subcommands:
  *   display-scale    Prints "2" for Retina main display, "1" for 1x external monitor.
- *   display-default  Prints Recall's default Overwatch resolution and refresh rate
- *                    ("<width> <height> <refresh>", e.g. "1920 1200 120" or "1920 1080 144").
  *   display-info     Prints "<screen_id> <def_w> <def_h> <def_hz> <wine_max_w> <wine_max_h>"
  *                    for per-display resolution/refresh memory and fit-to-screen clamping.
  *   gpu-name         Prints the default Metal GPU name (e.g. "Apple M3 Pro").
@@ -82,7 +80,7 @@ static NSString *builtInMicUIDForBluetoothHeadset(void) {
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         if (argc < 2) {
-            fprintf(stderr, "usage: notrecall-sysinfo <display-scale|display-default|display-info|gpu-name|bt-voice-uid>\n");
+            fprintf(stderr, "usage: notrecall-sysinfo <display-scale|display-info|gpu-name|bt-voice-uid>\n");
             return 2;
         }
         NSString *cmd = @(argv[1]);
@@ -96,7 +94,7 @@ int main(int argc, const char *argv[]) {
             printf("%d\n", scale);
             return 0;
         }
-        if ([cmd isEqualToString:@"display-default"] || [cmd isEqualToString:@"display-info"]) {
+        if ([cmd isEqualToString:@"display-info"]) {
             CGDirectDisplayID disp = CGMainDisplayID();
             int width = 1920, height = 1200, refresh = 120;
             long maxW = 16384, maxH = 16384;
@@ -118,18 +116,14 @@ int main(int argc, const char *argv[]) {
                 }
                 CGDisplayModeRelease(mode);
             }
-            if ([cmd isEqualToString:@"display-default"]) {
-                printf("%d %d %d\n", width, height, refresh);
-            } else {
-                char screenID[64] = "default";
-                if (disp && CGDisplayIsOnline(disp)) {
-                    snprintf(screenID, sizeof(screenID), "%u-%u-%u",
-                             CGDisplayVendorNumber(disp),
-                             CGDisplayModelNumber(disp),
-                             CGDisplaySerialNumber(disp));
-                }
-                printf("%s %d %d %d %ld %ld\n", screenID, width, height, refresh, maxW, maxH);
+            char screenID[64] = "default";
+            if (disp && CGDisplayIsOnline(disp)) {
+                snprintf(screenID, sizeof(screenID), "%u-%u-%u",
+                         CGDisplayVendorNumber(disp),
+                         CGDisplayModelNumber(disp),
+                         CGDisplaySerialNumber(disp));
             }
+            printf("%s %d %d %d %ld %ld\n", screenID, width, height, refresh, maxW, maxH);
             return 0;
         }
         if ([cmd isEqualToString:@"gpu-name"]) {

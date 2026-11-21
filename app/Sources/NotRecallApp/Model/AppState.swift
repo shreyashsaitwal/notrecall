@@ -244,7 +244,7 @@ final class AppState: ObservableObject {
             let runtimeVer = Self.readRuntimeVersion(in: nrSupport.appending(path: "runtime"))
             let recallVer = Self.readInstalledRecallVersion(in: nrSupport)
             let toolInstalled = fm.isExecutableFile(atPath: compatTool.appending(path: "run").path)
-            let helpersReady = fm.isExecutableFile(atPath: nrSupport.appending(path: "helpers/portable-pipeline").path)
+            let helpersReady = fm.isExecutableFile(atPath: nrSupport.appending(path: "helpers/ow2-pipeline").path)
             let detectedRuntime = Self.detectRecallRuntime(home: homeDir)
 
             let libraries = Self.discoverSteamLibraries(home: homeDir)
@@ -1062,15 +1062,6 @@ final class AppState: ObservableObject {
         if let hit = unpackedCandidates.first(where: { fm.isExecutableFile(atPath: $0.appending(path: "bin/wine").path) }) {
             return hit
         }
-        // 3. Local dev build/runtime.tar.gz if present.
-        if let exeDir = Bundle.main.executableURL?.deletingLastPathComponent() {
-            var dir = exeDir
-            for _ in 0..<5 {
-                let candidate = dir.appending(path: "build/runtime.tar.gz")
-                if fm.fileExists(atPath: candidate.path) { return candidate }
-                dir.deleteLastPathComponent()
-            }
-        }
         return nil
     }
 
@@ -1138,8 +1129,7 @@ final class AppState: ObservableObject {
         guard confstr(_CS_DARWIN_USER_CACHE_DIR, &buf, buf.count) > 0 else { return [] }
         let root = URL(filePath: String(cString: buf))
         var urls = [
-            root.appending(path: "io.shreyash.notrecall.game.\(appID)/com.apple.metal"),
-            root.appending(path: "com.notrecall.game.\(appID)/com.apple.metal")
+            root.appending(path: "io.shreyash.notrecall.game.\(appID)/com.apple.metal")
         ]
         if appID == "2357570" {
             urls.append(root.appending(path: "org.overwatch2mac.overwatch/com.apple.metal"))
@@ -1165,7 +1155,7 @@ final class AppState: ObservableObject {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             proc.waitUntilExit()
             let args = String(decoding: data, as: UTF8.self)
-            return args.contains("portable-pipeline")
+            return args.contains("ow2-pipeline")
         } catch {
             return false
         }

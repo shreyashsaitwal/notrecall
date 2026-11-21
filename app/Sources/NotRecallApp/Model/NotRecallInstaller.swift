@@ -3,11 +3,8 @@ import Foundation
 
 struct NotRecallInstallOptions: Sendable {
     var runtimeSource: URL? = nil
-    var helpersSource: URL? = nil
     var runtimeOnly: Bool = false
     var dryRun: Bool = false
-    var skipVerify: Bool = false
-    var forcePatchNtdll: Bool = false
     var recallTeamID: String? = ProcessInfo.processInfo.environment["RECALL_TEAM_ID"]
 }
 
@@ -65,7 +62,7 @@ enum NotRecallInstaller {
 
         do {
             // 1. Locate Recall runtime source.
-            guard var runtimeSrc = options.runtimeSource ?? findRecallRuntime(home: home, resourcesRoot: resourcesRoot) else {
+            guard var runtimeSrc = options.runtimeSource ?? findRecallRuntime(home: home) else {
                 throw InstallerError(
                     message: "Could not locate a Recall release (.dmg, Recall.app, runtime.tar.gz, or bin/wine). Download a release from GitHub or choose a local Recall file."
                 )
@@ -118,7 +115,7 @@ enum NotRecallInstaller {
             }
 
             if let appSrc = recallAppSrc {
-                if !options.skipVerify && !options.dryRun {
+                if !options.dryRun {
                     log("==> Verifying Recall.app code signature")
                     var args = ["--verify", "--deep", "--strict"]
                     if let teamID = options.recallTeamID, !teamID.isEmpty {
@@ -225,11 +222,7 @@ enum NotRecallInstaller {
             // 4. Wire NotProton Steamworks bridge (lsteamclient + patched ntdll.dll).
             log("==> Wiring NotProton Steamworks bridge into staged Recall runtime")
             if options.dryRun {
-                if options.forcePatchNtdll {
-                    log("[dry-run] copy lsteamclient.{dll,so} and patch Recall's own ntdll.dll via scripts/patch_ntdll.sh")
-                } else {
-                    log("[dry-run] copy lsteamclient.{dll,so} and patched 26.3 ntdll.dll (or fallback via patch_ntdll.sh)")
-                }
+                log("[dry-run] copy lsteamclient.{dll,so} and patched CrossOver 26.3 ntdll.dll")
             } else {
                 let stageWin64 = stageRuntime.appending(path: "lib/wine/x86_64-windows")
                 let stageWin32 = stageRuntime.appending(path: "lib/wine/i386-windows")
@@ -262,45 +255,25 @@ enum NotRecallInstaller {
                     throw InstallerError(message: "NotProton bridge at \(bridgeSrc.path) is missing lsteamclient.dll or x86_64-unix/lsteamclient.so.")
                 }
 
-                var patchedNtdllDir: URL?
-                if !options.forcePatchNtdll {
-                    let wineBridgeDir = bridgeSrc.appending(path: "wine")
-                    if let dirs = try? fm.contentsOfDirectory(at: wineBridgeDir, includingPropertiesForKeys: nil) {
-                        patchedNtdllDir = dirs
-                            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-                            .first {
-                                $0.lastPathComponent.hasPrefix("26.3") &&
-                                fm.fileExists(atPath: $0.appending(path: "x86_64-windows/ntdll.dll").path)
-                            }
+                let wineBridgeDir = bridgeSrc.appending(path: "wine")
+                let patchedNtdllDir = (try? fm.contentsOfDirectory(at: wineBridgeDir, includingPropertiesForKeys: nil))?
+                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                    .first {
+                        $0.lastPathComponent.hasPrefix("26.3") &&
+                        fm.fileExists(atPath: $0.appending(path: "x86_64-windows/ntdll.dll").path)
                     }
-                }
 
-                if let ntdllDir = patchedNtdllDir {
-                    log("    Using NotProton patched CrossOver 26.3 ntdll.dll from: \(ntdllDir.path)")
-                    try copyReplacing(
-                        from: ntdllDir.appending(path: "x86_64-windows/ntdll.dll"),
-                        to: stageWin64.appending(path: "ntdll.dll")
-                    )
-                    let ntdll32 = ntdllDir.appending(path: "i386-windows/ntdll.dll")
-                    if fm.fileExists(atPath: ntdll32.path) && isDirectory(stageWin32) {
-                        try copyReplacing(from: ntdll32, to: stageWin32.appending(path: "ntdll.dll"))
-                    }
-                } else if let patchScript = resourcesRoot?.appending(path: "scripts/patch_ntdll.sh"),
-                          fm.isExecutableFile(atPath: patchScript.path) {
-                    if options.forcePatchNtdll {
-                        log("    --patch-ntdll requested: patching Recall's own ntdll.dll via scripts/patch_ntdll.sh...")
-                    } else {
-                        log("    No pre-staged 26.3 ntdll.dll in \(bridgeSrc.appending(path: "wine").path)/26.3*; trying scripts/patch_ntdll.sh...")
-                    }
-                    let patchRes = runProcess("/bin/sh", [patchScript.path, stageRuntime.path])
-                    if !patchRes.output.isEmpty {
-                        log(patchRes.output.trimmingCharacters(in: .newlines))
-                    }
-                    guard patchRes.status == 0 else {
-                        throw InstallerError(message: "Could not patch ntdll.dll via scripts/patch_ntdll.sh. Set up CrossOver 26.3 in NotProton (so bridge/wine/26.3* exists) or install mingw-w64 + NotProton/ntdll-patch.")
-                    }
-                } else {
-                    throw InstallerError(message: "No CrossOver 26.3 patched ntdll.dll found under \(bridgeSrc.appending(path: "wine").path)/26.3* and patch_ntdll.sh unavailable.")
+                guard let ntdllDir = patchedNtdllDir else {
+                    throw InstallerError(message: "No CrossOver 26.3 patched ntdll.dll found under \(wineBridgeDir.path)/26.3*. Open NotProton and set up CrossOver 26.3 first.")
+                }
+                log("    Using NotProton patched CrossOver 26.3 ntdll.dll from: \(ntdllDir.path)")
+                try copyReplacing(
+                    from: ntdllDir.appending(path: "x86_64-windows/ntdll.dll"),
+                    to: stageWin64.appending(path: "ntdll.dll")
+                )
+                let ntdll32 = ntdllDir.appending(path: "i386-windows/ntdll.dll")
+                if fm.fileExists(atPath: ntdll32.path) && isDirectory(stageWin32) {
+                    try copyReplacing(from: ntdll32, to: stageWin32.appending(path: "ntdll.dll"))
                 }
 
                 // Atomically swap staged runtime into place.
@@ -364,16 +337,14 @@ enum NotRecallInstaller {
             // 5. Stage Recall shader helpers.
             func stageRecallHelpers() throws {
                 log("==> Installing shader pipeline helpers")
-                let bins = ["portable-pipeline", "pipeline-prepare", "pipeline-warm", "libpipeline_prepare.dylib"]
+                let bins = ["ow2-pipeline", "pipeline-prepare", "pipeline-warm", "libpipeline_prepare.dylib"]
                 var stagedCount = 0
                 var missing: [String] = []
                 for bin in bins {
                     if let found = findHelperBinary(
                         named: bin,
                         recallHelpersDir: recallHelpersDir,
-                        helpersSource: options.helpersSource,
                         resourcesRoot: resourcesRoot,
-                        runtimeSrc: runtimeSrc,
                         home: home
                     ) {
                         log("    Staging \(bin) from: \(found.path)")
@@ -388,8 +359,14 @@ enum NotRecallInstaller {
                         missing.append(bin)
                     }
                 }
+                if !options.dryRun {
+                    let legacyPipeline = nrSupport.appending(path: "helpers/portable-pipeline")
+                    if entryExists(at: legacyPipeline) {
+                        try? fm.removeItem(at: legacyPipeline)
+                    }
+                }
                 if stagedCount == 0 {
-                    log("    Note: portable-pipeline helper not found (in-game DXMT shader caching still works; use a Recall .dmg/.app to enable offline precompilation).")
+                    log("    Note: ow2-pipeline helper not found (in-game DXMT shader caching still works; use a Recall .dmg/.app to enable offline precompilation).")
                 } else if !missing.isEmpty {
                     log("    Warning: missing companion helper(s): \(missing.joined(separator: " "))")
                     log("    Use a Recall .dmg or Recall.app for full offline precompilation & warming.")
@@ -397,7 +374,7 @@ enum NotRecallInstaller {
             }
 
             if options.runtimeOnly {
-                if recallHelpersDir != nil || options.helpersSource != nil {
+                if recallHelpersDir != nil {
                     try stageRecallHelpers()
                 }
                 let verSuffix = recallAppVersion.map { " (Recall \($0))" } ?? ""
@@ -432,9 +409,7 @@ enum NotRecallInstaller {
             if let sysinfoBin = findHelperBinary(
                 named: "notrecall-sysinfo",
                 recallHelpersDir: nil,
-                helpersSource: options.helpersSource,
                 resourcesRoot: resRoot,
-                runtimeSrc: runtimeSrc,
                 home: home
             ) {
                 log("    Staging notrecall-sysinfo from: \(sysinfoBin.path)")
@@ -493,7 +468,7 @@ enum NotRecallInstaller {
             log("")
             log("Done!\(verSentence) Restart Steam, then select 'NotRecall (Recall Wine + DXMT)' under:")
             log("  Game -> Properties -> Compatibility -> Force the use of a specific Steam Play compatibility tool")
-            log("Configure MetalFX, Metal HUD, mouse mode, and other options directly in Steam's Compatibility tab (or set global defaults in NotRecall.app).")
+            log("Configure MetalFX, Metal HUD, mouse mode, and other options directly in Steam's Compatibility tab.")
 
             return NotRecallOperationResult(
                 succeeded: true,
@@ -530,7 +505,7 @@ enum NotRecallInstaller {
         let nrSupport = home.appending(path: "Library/Application Support/notrecall")
         let nrCache = home.appending(path: "Library/Caches/notrecall")
         let toolDst = home.appending(path: "Library/Application Support/Steam/compatibilitytools.d/notrecall-proton")
-        let legacyPluginDst = npSupport.appending(path: "plugins/notrecall.conf")
+        let pluginDst = npSupport.appending(path: "plugins/notrecall.conf")
 
         do {
             log("==> Removing Steam compatibility tool: \(toolDst.path)")
@@ -538,9 +513,9 @@ enum NotRecallInstaller {
                 try fm.removeItem(at: toolDst)
             }
 
-            if entryExists(at: legacyPluginDst) {
-                log("==> Removing legacy NotProton plugin: \(legacyPluginDst.path)")
-                try fm.removeItem(at: legacyPluginDst)
+            if entryExists(at: pluginDst) {
+                log("==> Removing NotProton plugin: \(pluginDst.path)")
+                try fm.removeItem(at: pluginDst)
             }
 
             log("==> Removing staged runtime, launchers & settings: \(nrSupport.path)")
@@ -594,7 +569,7 @@ enum NotRecallInstaller {
         return nil
     }
 
-    private static func findRecallRuntime(home: URL, resourcesRoot: URL?) -> URL? {
+    private static func findRecallRuntime(home: URL) -> URL? {
         let fm = FileManager.default
         let appCandidates = [
             URL(filePath: "/Applications/Recall.app"),
@@ -605,15 +580,6 @@ enum NotRecallInstaller {
             fm.isExecutableFile(atPath: $0.appending(path: "Contents/Resources/runtime/bin/wine").path)
         }) {
             return hit
-        }
-
-        if let root = resourcesRoot {
-            for rel in ["runtime.tar.gz", "build/runtime.tar.gz"] {
-                let candidate = root.appending(path: rel)
-                if fm.fileExists(atPath: candidate.path) {
-                    return candidate
-                }
-            }
         }
 
         let owRoot = home.appending(path: "Library/Application Support/Overwatch2Mac")
@@ -645,43 +611,26 @@ enum NotRecallInstaller {
     private static func findHelperBinary(
         named binName: String,
         recallHelpersDir: URL?,
-        helpersSource: URL?,
         resourcesRoot: URL?,
-        runtimeSrc: URL,
         home: URL
     ) -> URL? {
         let fm = FileManager.default
         var searchDirs: [URL] = []
         if binName == "notrecall-sysinfo" {
-            if let helpersSource { searchDirs.append(helpersSource) }
             if let resourcesRoot {
                 searchDirs.append(resourcesRoot.appending(path: "helpers"))
                 searchDirs.append(resourcesRoot.appending(path: "build/helpers"))
             }
         } else {
             if let recallHelpersDir { searchDirs.append(recallHelpersDir) }
-            if let helpersSource { searchDirs.append(helpersSource) }
-            if let resourcesRoot {
-                searchDirs.append(resourcesRoot.appending(path: "helpers"))
-                searchDirs.append(resourcesRoot.appending(path: "build/helpers"))
-            }
             searchDirs.append(URL(filePath: "/Applications/Recall.app/Contents/Helpers"))
-            searchDirs.append(URL(filePath: "/Applications/Recall.app/Contents/MacOS"))
             searchDirs.append(home.appending(path: "Applications/Recall.app/Contents/Helpers"))
-            searchDirs.append(runtimeSrc.deletingLastPathComponent().appending(path: "helpers"))
         }
 
         for dir in searchDirs {
             let direct = dir.appending(path: binName)
             if fm.isExecutableFile(atPath: direct.path) {
                 return direct
-            }
-            // Recall ships portable_pipeline.swift as Contents/Helpers/ow2-pipeline.
-            if binName == "portable-pipeline" {
-                let ow2 = dir.appending(path: "ow2-pipeline")
-                if fm.isExecutableFile(atPath: ow2.path) {
-                    return ow2
-                }
             }
         }
         return nil

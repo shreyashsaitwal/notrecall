@@ -1,6 +1,6 @@
 #!/bin/sh
 # Pre-launch and post-session shader pipeline cache hook for notrecall.
-# Wraps Recall's native portable-pipeline helper (consolidate, warm, and
+# Wraps Recall's native ow2-pipeline helper (consolidate, warm, and
 # --after-session background archive precompilation) per Steam AppID.
 set -e
 
@@ -11,7 +11,7 @@ log="${4:-/dev/null}"
 
 support_dir="$HOME/Library/Application Support/notrecall"
 helper_dir="$support_dir/helpers"
-portable_pipeline="$helper_dir/portable-pipeline"
+ow2_pipeline="$helper_dir/ow2-pipeline"
 
 [ -n "$cache_root" ] || exit 0
 pid_file="$cache_root/precompile.pid"
@@ -24,7 +24,7 @@ stop_background_precompile() {
   if kill -0 "$old_pid" 2>/dev/null; then
     old_args=$(/bin/ps -p "$old_pid" -o args= 2>/dev/null || true)
     case "$old_args" in
-      *portable-pipeline*) ;;
+      *ow2-pipeline*) ;;
       *) return 0 ;;
     esac
     old_pgid=$(/bin/ps -p "$old_pid" -o pgid= 2>/dev/null | tr -d ' \t' || true)
@@ -49,8 +49,8 @@ stop_background_precompile() {
   fi
 }
 
-if [ ! -x "$portable_pipeline" ]; then
-  echo "=== pipeline: $portable_pipeline not installed; in-game DXMT shader caching still active ===" >> "$log" 2>&1 || true
+if [ ! -x "$ow2_pipeline" ]; then
+  echo "=== pipeline: $ow2_pipeline not installed; in-game DXMT shader caching still active ===" >> "$log" 2>&1 || true
   exit 0
 fi
 
@@ -61,9 +61,9 @@ case "$mode" in
     stop_background_precompile
     echo "=== pipeline: pre-launch consolidate & warm ($cache_root) ===" >> "$log" 2>&1 || true
     if [ -n "$game_app" ] && [ -e "$game_app" ]; then
-      "$portable_pipeline" "$cache_root" "$game_app" >> "$log" 2>&1 || true
+      "$ow2_pipeline" "$cache_root" "$game_app" >> "$log" 2>&1 || true
     else
-      "$portable_pipeline" "$cache_root" >> "$log" 2>&1 || true
+      "$ow2_pipeline" "$cache_root" >> "$log" 2>&1 || true
     fi
     ;;
   post)
@@ -75,9 +75,9 @@ case "$mode" in
     echo "=== pipeline: spawning detached post-session shader precompilation ===" >> "$log" 2>&1 || true
     post_log="$cache_root/precompile.log"
     if [ -n "$game_app" ] && [ -e "$game_app" ]; then
-      set -- "$portable_pipeline" --after-session "$cache_root" "$game_app"
+      set -- "$ow2_pipeline" --after-session "$cache_root" "$game_app"
     else
-      set -- "$portable_pipeline" --after-session "$cache_root"
+      set -- "$ow2_pipeline" --after-session "$cache_root"
     fi
     # Detach into a new session, reparent to launchd, and close inherited FDs > 2
     # so Steam never stays stuck on "Running" waiting for background precompilation.

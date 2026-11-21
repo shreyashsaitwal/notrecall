@@ -9,7 +9,6 @@ echo "==> Checking POSIX shell syntax (sh -n)"
 for f in \
   "$PROJECT_DIR/compat/run" \
   "$PROJECT_DIR/scripts/pipeline_hook.sh" \
-  "$PROJECT_DIR/scripts/patch_ntdll.sh" \
   "$PROJECT_DIR/scripts/package.sh" \
   "$PROJECT_DIR/tests/check.sh"; do
   sh -n "$f"
