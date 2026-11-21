@@ -186,6 +186,7 @@ def _make_expand_cross(command: str, makefile: str, cross_cflags: str) -> str:
 
 
 RECALL_WINE_OVERLAY_PATCHES = (
+    'patches/wine-portable-directory-boolean.patch',
     'patches/wine-server-registry-save.patch',
     'patches/wine-ntdll-syscall-log.patch',
     'patches/wine-win32u-display-log.patch',
@@ -234,7 +235,7 @@ def wine_patches_digest(recall_dir: Path) -> str:
         h.update(p.read_bytes())
     # Include overlay build-flag & signing-contract changes so cache and NotRecall.app
     # detect rebuilds even when upstream Recall patch files are unchanged.
-    h.update(b'winemac:HAVE_MTLDEVICE_REGISTRYID=1\0wineserver:no-dyld-env\0')
+    h.update(b'winemac:HAVE_MTLDEVICE_REGISTRYID=1\0winecoreaudio:HAVE_AVFOUNDATION=1\0wineserver:no-dyld-env\0')
     return h.hexdigest()
 
 
@@ -287,7 +288,13 @@ def build_recall_wine_overlays(recall_dir: Path, work: Path, stage: Path, runtim
         (src_copy / 'loader').mkdir(parents=True)
         shutil.copy2(wine_src / 'loader/wine.inf.in', src_copy / 'loader/wine.inf.in')
         for rel in RECALL_WINE_OVERLAY_PATCHES:
-            run('/usr/bin/patch', '-p1', '-s', '-i', recall_dir / rel, cwd=src_copy)
+            patch_file = recall_dir / rel
+            already = subprocess.run(
+                ['/usr/bin/patch', '--dry-run', '-R', '-N', '-F0', '-p1', '-s', '-i', str(patch_file)],
+                cwd=src_copy, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            if already.returncode != 0:
+                run('/usr/bin/patch', '-N', '-F0', '-p1', '-s', '-i', patch_file, cwd=src_copy)
 
         prefix_map = f' -ffile-prefix-map={src_copy}=/build/overwatch-2-mac/sources/wine/sources/wine'
 
@@ -327,6 +334,10 @@ def build_recall_wine_overlays(recall_dir: Path, work: Path, stage: Path, runtim
                     # back to IOPCIDevice (0 GPUs on Apple Silicon) and lock_display_devices
                     # loops forever with 'Failed to read display config.'.
                     extra_flags = ' -DHAVE_MTLDEVICE_REGISTRYID=1'
+                elif name == 'dlls/winecoreaudio.drv/authorization':
+                    # Same Rosetta Objective-C probe failure leaves HAVE_AVFOUNDATION_AVFOUNDATION_H
+                    # undefined, disabling macOS microphone authorization prompts.
+                    extra_flags = ' -DHAVE_AVFOUNDATION_AVFOUNDATION_H=1'
                 _shell(cmd + extra_flags + prefix_map, name + '.o')
 
             with ThreadPoolExecutor(max_workers=6) as pool:
@@ -343,6 +354,10 @@ def build_recall_wine_overlays(recall_dir: Path, work: Path, stage: Path, runtim
                 for sym in ('_MTLCopyAllDevices', '_CGDirectDisplayCopyCurrentMetalDevice'):
                     if sym not in syms:
                         raise RuntimeError(f'winemac.so missing Metal GPU symbol {sym} (HAVE_MTLDEVICE_REGISTRYID not active)')
+            elif dest_rel == 'lib/wine/x86_64-unix/winecoreaudio.so':
+                syms = subprocess.check_output(['/usr/bin/nm', '-u', str(raw)], text=True)
+                if '_OBJC_CLASS_$_AVCaptureDevice' not in syms:
+                    raise RuntimeError('winecoreaudio.so missing _OBJC_CLASS_$_AVCaptureDevice (HAVE_AVFOUNDATION_AVFOUNDATION_H not active)')
             copy_entry(raw, stage / dest_rel)
 
         # 2. Synthesized winemacmf.dll (PE, from mfh264enc template).
