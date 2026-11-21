@@ -609,4 +609,25 @@ HOME="$fake_home" \
 [ "$(tail -n 1 "$dxmt_sec_data/notrecall-dxmt.conf")" = "[Overwatch.exe]" ]
 echo "    OK: Managed notrecall-dxmt.conf resets section to [Overwatch.exe] after user overrides"
 
+# Case 15: NOTRECALL_BT_MIC_FIX=0 in settings.env disables Bluetooth mic rerouting.
+bt_cfg_data="$test_root/compatdata/bt-cfg"
+mkdir -p "$bt_cfg_data" "$fake_home/Library/Application Support/notrecall"
+printf 'NOTRECALL_BT_MIC_FIX=0\n' > "$fake_home/Library/Application Support/notrecall/settings.env"
+bt_reg_out="$test_root/bt_cfg.reg"
+bt_env_out="$test_root/bt_cfg.env"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$bt_cfg_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTRECALL_TEST_BT_MIC_UID="BuiltInMicrophoneDevice" \
+  TEST_REG_OUT="$bt_reg_out" \
+  TEST_ENV_OUT="$bt_env_out" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+assert_env "$bt_env_out" "NOTRECALL_BT_MIC_FIX=0"
+grep -Fq '"DefaultInput"=-' "$bt_reg_out"
+grep -Fq '"DefaultVoiceInput"=-' "$bt_reg_out"
+rm -f "$fake_home/Library/Application Support/notrecall/settings.env"
+echo "    OK: NOTRECALL_BT_MIC_FIX=0 honored from settings.env"
+
 echo "==> All checks passed!"
