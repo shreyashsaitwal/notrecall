@@ -46,11 +46,13 @@ cat > "$fake_runtime/bin/wine" <<'STUB'
 #!/bin/sh
 if [ "${1:-}" = "wineboot" ]; then
   [ -n "${TEST_WINEBOOT_LOG:-}" ] && printf '%s\n' "$*" >> "$TEST_WINEBOOT_LOG"
+  [ -n "${TEST_WINEBOOT_MSYNC_LOG:-}" ] && printf '%s\n' "${WINEMSYNC-UNSET}" >> "$TEST_WINEBOOT_MSYNC_LOG"
   mkdir -p "$WINEPREFIX"
   : > "$WINEPREFIX/system.reg"
   exit 0
 fi
 if [ "${1:-}" = "reg" ]; then
+  [ -n "${TEST_REG_MSYNC_LOG:-}" ] && printf '%s\n' "${WINEMSYNC-UNSET}" >> "$TEST_REG_MSYNC_LOG"
   if [ "${2:-}" = "import" ] && [ -n "${TEST_REG_OUT:-}" ]; then
     reg_base="${3#C:\\}"
     cp -f "$WINEPREFIX/drive_c/$reg_base" "$TEST_REG_OUT" 2>/dev/null || true
@@ -62,6 +64,7 @@ exit 0
 STUB
 cat > "$fake_runtime/bin/wineserver" <<'STUB'
 #!/bin/sh
+[ -n "${TEST_WINESERVER_LOG:-}" ] && printf '%s\n' "$*" >> "$TEST_WINESERVER_LOG"
 exit 0
 STUB
 chmod 755 "$fake_runtime/bin/wine" "$fake_runtime/bin/wineserver"
@@ -629,5 +632,76 @@ grep -Fq '"DefaultInput"=-' "$bt_reg_out"
 grep -Fq '"DefaultVoiceInput"=-' "$bt_reg_out"
 rm -f "$fake_home/Library/Application Support/notrecall/settings.env"
 echo "    OK: NOTRECALL_BT_MIC_FIX=0 honored from settings.env"
+
+# Case 16: WINEMSYNC is exported before wineboot/reg import, honors DISABLE_MSYNC & settings.env,
+# and restarts wineserver when switching MSync mode on an existing prefix.
+ms_data="$test_root/compatdata/msync-test"
+mkdir -p "$ms_data"
+ms_wb_log="$test_root/ms_wb.log"
+ms_reg_log="$test_root/ms_reg.log"
+ms_ws_log="$test_root/ms_ws.log"
+ms_env="$test_root/ms.env"
+
+# Initial launch (default MSync on): wineboot and reg import must see WINEMSYNC=1.
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ms_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_WINEBOOT_MSYNC_LOG="$ms_wb_log" \
+  TEST_REG_MSYNC_LOG="$ms_reg_log" \
+  TEST_ENV_OUT="$ms_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+grep -Fqx "1" "$ms_wb_log"
+grep -Fqx "1" "$ms_reg_log"
+assert_env "$ms_env" "WINEMSYNC=1"
+[ "$(cat "$ms_data/.notrecall-msync")" = "1" ]
+
+# Flipping to Turn Off MSync on an existing prefix must kill/wait wineserver and pass WINEMSYNC=0.
+: > "$ms_ws_log"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ms_data" \
+  NOTRECALL_GAME_MODE=0 \
+  NOTPROTON_NOTRECALL_DISABLE_MSYNC=1 \
+  TEST_WINESERVER_LOG="$ms_ws_log" \
+  TEST_ENV_OUT="$ms_env" \
+  sh "$PROJECT_DIR/compat/run" run "C:\\Games\\Overwatch\\vcredist.exe"
+
+assert_env "$ms_env" "WINEMSYNC=0"
+[ "$(cat "$ms_data/.notrecall-msync")" = "0" ]
+[ "$(tr '\n' ',' < "$ms_ws_log")" = "-k,-w," ]
+
+# Repeating with unchanged WINEMSYNC=0 (via settings.env) must NOT restart wineserver.
+mkdir -p "$fake_home/Library/Application Support/notrecall"
+printf 'WINEMSYNC=0\n' > "$fake_home/Library/Application Support/notrecall/settings.env"
+: > "$ms_ws_log"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ms_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_WINESERVER_LOG="$ms_ws_log" \
+  TEST_ENV_OUT="$ms_env" \
+  sh "$PROJECT_DIR/compat/run" run "C:\\Games\\Overwatch\\vcredist.exe"
+
+assert_env "$ms_env" "WINEMSYNC=0"
+[ ! -s "$ms_ws_log" ]
+rm -f "$fake_home/Library/Application Support/notrecall/settings.env"
+
+# Existing prefix without .notrecall-msync stamp (upgrade path) must restart wineserver once.
+rm -f "$ms_data/.notrecall-msync"
+: > "$ms_ws_log"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$ms_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_WINESERVER_LOG="$ms_ws_log" \
+  TEST_ENV_OUT="$ms_env" \
+  sh "$PROJECT_DIR/compat/run" run "C:\\Games\\Overwatch\\vcredist.exe"
+
+assert_env "$ms_env" "WINEMSYNC=1"
+[ "$(cat "$ms_data/.notrecall-msync")" = "1" ]
+[ "$(tr '\n' ',' < "$ms_ws_log")" = "-k,-w," ]
+echo "    OK: WINEMSYNC early export, mode-flip wineserver restart, and settings.env disable"
 
 echo "==> All checks passed!"

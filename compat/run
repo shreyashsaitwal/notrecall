@@ -184,6 +184,25 @@ load_settings_file() {
 [ -n "${STEAM_COMPAT_DATA_PATH:-}" ] && load_settings_file "$STEAM_COMPAT_DATA_PATH/notrecall-settings.env"
 load_settings_file "$nr_support/settings.env"
 
+# Resolve Wine sync env early so wineboot, reg import, and the game all use the same mode.
+export WINEMSYNC="${WINEMSYNC:-1}"
+export WINEESYNC="${WINEESYNC:-0}"
+msync_trimmed="$WINEMSYNC"
+while :; do
+  case "$msync_trimmed" in
+    ' '*|'	'*) msync_trimmed="${msync_trimmed#?}" ;;
+    *) break ;;
+  esac
+done
+case "$msync_trimmed" in +*|-*) msync_trimmed="${msync_trimmed#?}" ;; esac
+while :; do
+  case "$msync_trimmed" in 0*) msync_trimmed="${msync_trimmed#0}" ;; *) break ;; esac
+done
+case "$msync_trimmed" in
+  [1-9]*) msync_mode=1 ;;
+  *) msync_mode=0 ;;
+esac
+
 # 3. Extract target .exe basename for Recall's dynamic env vars.
 target="${1:-}"
 exe_name=""
@@ -505,6 +524,24 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   export WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
   mkdir -p "$WINEPREFIX"
   lay_out_proton_profile
+  # If WINEMSYNC changed since the last launch in this prefix (e.g. toggling Turn Off MSync
+  # or following a Steam install script), stop any lingering wineserver so ntdll msync_init
+  # does not abort on a client/server mode mismatch.
+  msync_stamp="$STEAM_COMPAT_DATA_PATH/.notrecall-msync"
+  prev_msync=""
+  if [ -f "$msync_stamp" ]; then
+    IFS= read -r prev_msync < "$msync_stamp" 2>/dev/null || prev_msync=""
+  fi
+  if [ "$prev_msync" != "$msync_mode" ]; then
+    if [ -f "$WINEPREFIX/system.reg" ]; then
+      echo "=== WINEMSYNC mode changed (${prev_msync:-unknown} -> $msync_mode); restarting wineserver ===" >> "$log" 2>&1 || true
+      without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
+      without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
+    fi
+    printf '%s\n' "$msync_mode" > "$msync_stamp.tmp.$$" 2>/dev/null && \
+      mv -f "$msync_stamp.tmp.$$" "$msync_stamp" 2>/dev/null || rm -f "$msync_stamp.tmp.$$" 2>/dev/null || true
+  fi
+
   wineinf_file="$nr_runtime/share/wine/wine.inf"
   wineinf_stamp="$STEAM_COMPAT_DATA_PATH/.notrecall-wineinf.sha"
   wineinf_sha=""
@@ -529,6 +566,10 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
       without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
       printf '%s\n' "$wineinf_sha" > "$wineinf_stamp.tmp.$$" 2>/dev/null && \
         mv -f "$wineinf_stamp.tmp.$$" "$wineinf_stamp" 2>/dev/null || rm -f "$wineinf_stamp.tmp.$$" 2>/dev/null || true
+    else
+      echo "=== warning: wineboot -u failed; stopping wineserver ===" >> "$log" 2>&1 || true
+      without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
+      without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
     fi
   fi
   map_game_drive
@@ -583,8 +624,6 @@ export CX_ACTIVE_GRAPHICS_BACKEND="dxmt"
 export CX_HACK_FILESYSTEM_TYPE="${CX_HACK_FILESYSTEM_TYPE:-1}"
 export ROSETTA_ADVERTISE_AVX="${ROSETTA_ADVERTISE_AVX:-1}"
 export WINE_SIMULATE_WRITECOPY="${WINE_SIMULATE_WRITECOPY:-1}"
-export WINEMSYNC="${WINEMSYNC:-1}"
-export WINEESYNC="${WINEESYNC:-0}"
 export DXMT_CANVAS_DRAWABLES="${DXMT_CANVAS_DRAWABLES:-3}"
 export DXMT_CANVAS_OVERLAY="${DXMT_CANVAS_OVERLAY:-0}"
 export DXMT_USE_DEFAULT_METAL_CACHE="${DXMT_USE_DEFAULT_METAL_CACHE:-1}"
