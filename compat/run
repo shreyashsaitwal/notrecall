@@ -987,14 +987,14 @@ sync_overwatch_metalfx_settings() {
     mac_gpu=$("$nr_helpers/notrecall-sysinfo" gpu-name 2>/dev/null || true)
   fi
   backup_ini="$STEAM_COMPAT_DATA_PATH/Settings_v0.before-gpu-sync.ini"
+  state_file="$STEAM_COMPAT_DATA_PATH/notrecall-display.state"
 
   /usr/bin/perl -e '
-    my ($path, $backup, $metalfx, $mac_gpu) = @ARGV;
+    my ($path, $backup, $metalfx, $mac_gpu, $state_path) = @ARGV;
     my $size = -s $path;
     exit 0 if !defined $size || $size > 1048576;
     open my $in, "<:raw", $path or exit 0;
-    local $/;
-    my $orig = <$in>;
+    my $orig = do { local $/; <$in> };
     close $in;
     exit 0 if !defined $orig;
     my $nl = ($orig =~ /\r\n/) ? "\r\n" : "\n";
@@ -1049,9 +1049,11 @@ sync_overwatch_metalfx_settings() {
       );
     }
 
+    my $gpu_section_found = 0;
     if ($apply_card) {
       my ($gs, $ge) = $find_section->("[GPU.");
       if ($gs >= 0) {
+        $gpu_section_found = 1;
         my $last = $gs;
         for my $i ($gs .. $ge - 1) {
           $last = $i + 1 if $lines[$i] =~ /\S/;
@@ -1091,21 +1093,52 @@ sync_overwatch_metalfx_settings() {
       }
     }
 
-    exit 0 if !$changed;
-    if (!-f $backup) {
-      if (open my $bf, ">:raw", "$backup.tmp.$$") {
-        print $bf $orig;
-        close $bf;
-        rename "$backup.tmp.$$", $backup;
+    if ($changed) {
+      if (!-f $backup) {
+        if (open my $bf, ">:raw", "$backup.tmp.$$") {
+          print $bf $orig;
+          close $bf;
+          rename "$backup.tmp.$$", $backup;
+        }
+      }
+      my $updated = join($nl, @lines);
+      my $tmp = "$path.nr-tmp.$$";
+      if (open my $out, ">:raw", $tmp) {
+        print $out $updated;
+        close $out and rename $tmp, $path or unlink $tmp;
       }
     }
-    my $updated = join($nl, @lines);
-    my $tmp = "$path.nr-tmp.$$";
-    open my $out, ">:raw", $tmp or exit 0;
-    print $out $updated;
-    close $out or do { unlink $tmp; exit 0; };
-    rename $tmp, $path or unlink $tmp;
-  ' "$settings_ini" "$backup_ini" "$metalfx_on" "$mac_gpu" >> "$log" 2>&1 || true
+
+    # Keep notrecall-display.state last_gpu in sync with the rewritten [GPU.*]
+    # section so the next launch remembers in-game resolution changes after toggling MetalFX.
+    if ($apply_card && $gpu_section_found && defined $card{GPUName} && defined $card{GPUVenderID}
+        && defined $state_path && -f $state_path && !-l $state_path) {
+      my $new_gpu = $card{GPUName} . "|" . $card{GPUVenderID};
+      if (open my $sf, "<:raw", $state_path) {
+        my @slines;
+        my $state_changed = 0;
+        while (my $line = <$sf>) {
+          chomp $line;
+          $line =~ s/\r$//;
+          my @f = split(/\t/, $line, -1);
+          if (@f >= 5 && $f[0] eq "last" && ($f[5] // "") ne $new_gpu) {
+            $f[5] = $new_gpu;
+            $line = join("\t", @f);
+            $state_changed = 1;
+          }
+          push @slines, $line;
+        }
+        close $sf;
+        if ($state_changed) {
+          my $stmp = "$state_path.tmp.$$";
+          if (open my $so, ">:raw", $stmp) {
+            print $so join("\n", @slines) . "\n";
+            close $so and rename $stmp, $state_path or unlink $stmp;
+          }
+        }
+      }
+    }
+  ' "$settings_ini" "$backup_ini" "$metalfx_on" "$mac_gpu" "$state_file" >> "$log" 2>&1 || true
 }
 [ "$verb" = "waitforexitandrun" ] && sync_overwatch_metalfx_settings
 

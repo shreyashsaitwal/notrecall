@@ -549,4 +549,49 @@ grep -Fqx "post|$fake_runtime/lib/wine/game-mode/Overwatch.app" "$pipe_args_log"
 rm -f "$fake_home/Library/Application Support/notrecall/helpers/pipeline_hook.sh"
 echo "    OK: pipeline-warm target selection (Overwatch.app vs lib/wine/x86_64-unix/wine) and cache_root/home"
 
+# Case 13: Toggling MetalFX syncs notrecall-display.state last_gpu so in-game resolution changes are remembered on next launch.
+mfx_disp_data="$test_root/compatdata/mfx-disp"
+mfx_settings_dir="$mfx_disp_data/pfx/drive_c/users/steamuser/Documents/Overwatch/Settings"
+mkdir -p "$mfx_settings_dir"
+mfx_ini="$mfx_settings_dir/Settings_v0.ini"
+cat > "$mfx_ini" <<'INI'
+[GPU.6]
+GPUName = "Apple M3 Pro"
+GPUVenderID = "4203"
+LastUsedGPUVendorID = "4203"
+
+[Render.13]
+FullScreenWidth = "1920"
+FullScreenHeight = "1200"
+FullScreenRefresh = "120"
+INI
+
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$mfx_disp_data" \
+  NOTRECALL_GAME_MODE=0 \
+  DXMT_ENABLE_NVEXT=1 \
+  NOTRECALL_TEST_DISPLAY_INFO="macA-1-1 1920 1200 120 3024 1964" \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+grep -Fq 'NVIDIA GeForce RTX 4090|4318' "$mfx_disp_data/notrecall-display.state"
+
+# Player changes resolution in-game to 2560x1600 during that MetalFX session.
+sed -i '' 's/FullScreenWidth = "1920"/FullScreenWidth = "2560"/; s/FullScreenHeight = "1200"/FullScreenHeight = "1600"/' "$mfx_ini"
+
+# Next launch must preserve 2560x1600 rather than reverting to 1920x1200.
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$mfx_disp_data" \
+  NOTRECALL_GAME_MODE=0 \
+  DXMT_ENABLE_NVEXT=1 \
+  NOTRECALL_TEST_DISPLAY_INFO="macA-1-1 1920 1200 120 3024 1964" \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+grep -Fq 'FullScreenWidth = "2560"' "$mfx_ini"
+grep -Fq 'FullScreenHeight = "1600"' "$mfx_ini"
+echo "    OK: MetalFX Settings_v0.ini rewrite keeps notrecall-display.state GPU in sync"
+
 echo "==> All checks passed!"
