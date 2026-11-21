@@ -494,19 +494,32 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
             if base in available and base != name:
                 needed.add(base)
 
-    # Strip debug symbols from PE modules.
+    # Strip debug symbols from PE modules, skipping Authenticode-signed nvngx.dll
+    # (llvm-strip truncates the PE certificate table, breaking NVIDIA's NGX loader).
     llvm_strip = recall_dir / 'runtime/toolchains/llvm-mingw-20251216-ucrt-macos-universal/bin/llvm-strip'
+    nvngx_rel = Path('lib/wine/x86_64-windows/nvngx.dll')
     if llvm_strip.is_file():
         pe_files = [
             p for p in (stage / 'lib/wine').rglob('*')
             if p.is_file() and not p.is_symlink()
             and p.name != 'nvngx.dll'
             and p.suffix in ('.exe', '.dll', '.drv', '.sys', '.acm', '.cpl', '.ocx', '.ax')
+            and p.relative_to(stage) != nvngx_rel
         ]
         def _strip_pe(p: Path):
             run(llvm_strip, '--strip-debug', p, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(_strip_pe, pe_files))
+
+    scripts_dir = str(recall_dir / 'scripts')
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import sign_pe
+    nvngx_staged = stage / nvngx_rel
+    if not nvngx_staged.is_file():
+        raise RuntimeError(f'Missing staged nvngx.dll: {nvngx_staged}')
+    if not sign_pe.check(nvngx_staged):
+        raise RuntimeError(f'nvngx.dll Authenticode signature check failed: {nvngx_staged}')
 
     # Fix Mach-O install names, rpaths, strip, and sign (never modify Apple's libd3dshared.dylib).
     native = [p for p in stage.rglob('*') if is_macho(p) and p != apple_dst]
@@ -559,6 +572,7 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
             sign_macho(p, identity, ent)
 
         # Create Overwatch.app Game Mode bundle using Recall's game_mode_app.py.
+
         game_mode_app.make(stage, MINIMUM_MACOS, identity)
         if identity == '-':
             # Re-sign ad-hoc without Hardened Runtime (--options runtime) to avoid
