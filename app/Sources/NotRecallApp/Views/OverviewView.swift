@@ -11,57 +11,47 @@ struct OverviewView: View {
                     isFullyInstalled: state.isFullyInstalled,
                     overwatchInstalled: state.overwatchInstalled,
                     overwatchConfigured: state.overwatchConfiguredForNotRecall,
-                    hasLocalRuntime: state.activeRuntimeSource != nil,
+                    hasRuntimeSource: state.activeRuntimeSource != nil,
                     hasSteamApp: state.steamAppURL != nil,
-                    installedRecallVersion: state.installedRecallVersion,
+                    stagedRuntimeSummary: state.stagedRuntimeSummary,
                     isBusy: state.isBusy,
-                    downloadProgress: state.downloadProgress,
-                    downloadStatusText: state.downloadStatusText,
                     onPlayOverwatch: { state.playOverwatch() },
                     onConfigureOverwatch: { Task { await state.configureOverwatchInSteam() } },
                     onInstall: {
-                        if let rt = state.activeRuntimeSource {
-                            Task { await state.installNotRecall(runtimeSource: rt) }
-                        } else {
-                            state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: false)
-                        }
+                        Task { await state.installNotRecall(runtimeSource: state.customRuntimeURL) }
                     },
-                    onOpenHighlights: { state.openOverwatchHighlights() },
-                    onCancelDownload: { state.cancelDownload() }
+                    onOpenHighlights: { state.openOverwatchHighlights() }
                 )
 
                 MetricsBentoRow(
                     warningCount: state.healthWarnings.count,
                     hasCriticalWarning: state.healthWarnings.contains(where: \.isCritical),
-                    installedRecallVersion: state.installedRecallVersion,
-                    availableUpdateVersion: state.availableRecallUpdate?.version,
                     stagedRuntimeReady: state.stagedRuntimeReady,
+                    stagedRuntimeVersion: state.stagedRuntimeVersion,
+                    bundledRuntimeVersion: state.bundledRuntimeVersion,
+                    bundledRuntimeUpdateAvailable: state.bundledRuntimeUpdateAvailable,
                     shaderSizeFormatted: state.totalShaderCacheFormatted,
                     shaderPackCount: state.totalShaderPackCount,
                     anyShaderCompiling: state.anyShaderCompiling,
                     anyShaderNeedsMacOSOptimization: state.anyShaderNeedsMacOSOptimization,
                     onOpenShaders: { state.selectedSection = .shaders },
-                    onOpenWhatsNew: { state.showWhatsNewSheet = true }
+                    onUpdateBundledRuntime: {
+                        Task { await state.installNotRecall(runtimeSource: nil, runtimeOnly: true) }
+                    }
                 )
 
-                if let update = state.availableRecallUpdate {
+                if state.bundledRuntimeUpdateAvailable {
                     InlineBanner(
                         symbol: "sparkles",
-                        title: "Recall \(update.version) is available",
-                        message: state.installedRecallVersion.map {
-                            "You have Recall \($0). Your games, saves, and settings stay untouched."
-                        } ?? "A newer Recall runtime is ready on GitHub.",
+                        title: "Updated bundled runtime ready (\(state.bundledRuntimeLabel))",
+                        message: "This build of NotRecall includes a newer Wine + DXMT runtime than what’s currently staged. Your games, saves, and settings stay untouched.",
                         tint: NotRecallTheme.brand
                     ) {
-                        HStack(spacing: 6) {
-                            Button("What’s New") { state.showWhatsNewSheet = true }
-                                .buttonStyle(SubtleButtonStyle(compact: true))
-                            Button("Update") {
-                                state.downloadAndInstallRecall(update, runtimeOnly: state.stagedRuntimeReady)
-                            }
-                            .buttonStyle(BrandButtonStyle(compact: true))
-                            .disabled(state.isBusy)
+                        Button("Update Runtime") {
+                            Task { await state.installNotRecall(runtimeSource: nil, runtimeOnly: true) }
                         }
+                        .buttonStyle(BrandButtonStyle(compact: true))
+                        .disabled(state.isBusy)
                     }
                 }
 
@@ -86,30 +76,21 @@ struct OverviewView: View {
                 RuntimeManagementCard(
                     activeRuntimeSource: state.activeRuntimeSource,
                     hasCustomRuntime: state.customRuntimeURL != nil,
-                    preferredDownloadTitle: state.preferredDownloadRelease.title,
-                    preferredDownloadSize: state.preferredDownloadRelease.formattedSize,
+                    bundledRuntimeLabel: state.bundledRuntimeLabel,
                     stagedRuntimeReady: state.stagedRuntimeReady,
                     isBusy: state.isBusy,
                     onChooseLocal: { state.selectLocalRuntime() },
                     onResetLocal: { state.clearCustomRuntime() },
                     onInstallOrUpdate: {
-                        if let rt = state.activeRuntimeSource {
-                            Task { await state.installNotRecall(runtimeSource: rt) }
-                        } else {
-                            state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: false)
-                        }
+                        Task { await state.installNotRecall(runtimeSource: state.customRuntimeURL) }
                     },
                     onUpdateRuntimeOnly: {
-                        if let rt = state.activeRuntimeSource {
-                            Task { await state.installNotRecall(runtimeSource: rt, runtimeOnly: true) }
-                        } else {
-                            state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: true)
-                        }
+                        Task { await state.installNotRecall(runtimeSource: state.customRuntimeURL, runtimeOnly: true) }
                     },
                     onDryRun: {
                         Task {
                             await state.installNotRecall(
-                                runtimeSource: state.activeRuntimeSource,
+                                runtimeSource: state.customRuntimeURL,
                                 dryRun: true,
                                 switchToLogs: true
                             )
@@ -161,17 +142,14 @@ struct OverwatchHeroCard: View {
     let isFullyInstalled: Bool
     let overwatchInstalled: Bool
     let overwatchConfigured: Bool
-    let hasLocalRuntime: Bool
+    let hasRuntimeSource: Bool
     let hasSteamApp: Bool
-    let installedRecallVersion: String?
+    let stagedRuntimeSummary: String
     let isBusy: Bool
-    let downloadProgress: Double?
-    let downloadStatusText: String
     let onPlayOverwatch: () -> Void
     let onConfigureOverwatch: () -> Void
     let onInstall: () -> Void
     let onOpenHighlights: () -> Void
-    let onCancelDownload: () -> Void
 
     private var statusTagText: String {
         if hasMissingPrerequisites { return "Prerequisites Needed" }
@@ -192,11 +170,10 @@ struct OverwatchHeroCard: View {
             return "Install the required prerequisites below before setting up NotRecall."
         }
         if !isFullyInstalled {
-            return "Stages Recall’s Mac runtime, Steam compatibility tool, and background shader optimizer."
+            return "Installs the bundled Wine + DXMT runtime, Steam compatibility tool, and shader optimizer offline."
         }
         if overwatchInstalled && overwatchConfigured {
-            let ver = installedRecallVersion.map { "Recall \($0)" } ?? "Recall runtime"
-            return "Configured in Steam with \(ver). Customize per-game options in Steam’s Compatibility tab."
+            return "Configured in Steam (\(stagedRuntimeSummary)). Customize per-game options in Steam’s Compatibility tab."
         }
         if overwatchInstalled {
             return "Overwatch is installed in Steam. Click Set Up in Steam to configure it automatically."
@@ -206,78 +183,53 @@ struct OverwatchHeroCard: View {
 
     var body: some View {
         SurfaceCard(padding: 18) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center, spacing: 14) {
-                    NotRecallEmblem(size: 46)
+            HStack(alignment: .center, spacing: 14) {
+                NotRecallEmblem(size: 46)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text("Overwatch on Steam")
-                                .font(NotRecallTheme.font(18, .bold))
-                                .tracking(-0.3)
-                            StatusTag(text: statusTagText, color: statusTagColor)
-                        }
-                        Text(subtitleText)
-                            .font(NotRecallTheme.font(12.5))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer(minLength: 12)
-
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        if !hasMissingPrerequisites {
-                            if !isFullyInstalled {
-                                Button(hasLocalRuntime ? "Install NotRecall" : "Download & Install", action: onInstall)
-                                    .buttonStyle(BrandButtonStyle())
-                                    .keyboardShortcut(.defaultAction)
-                                    .disabled(isBusy)
-                            } else if overwatchInstalled && !overwatchConfigured {
-                                Button(action: onConfigureOverwatch) {
-                                    Label("Set Up in Steam", systemImage: "wand.and.stars")
-                                }
-                                .buttonStyle(BrandButtonStyle())
-                                .keyboardShortcut(.defaultAction)
-                                .disabled(isBusy || !hasSteamApp)
-                            } else if overwatchInstalled {
-                                Button(action: onPlayOverwatch) {
-                                    Label("Play Overwatch", systemImage: "play.fill")
-                                }
-                                .buttonStyle(BrandButtonStyle())
-                                .keyboardShortcut(.defaultAction)
-                                .disabled(isBusy || !hasSteamApp)
-                            }
-                        }
-
-                        Button(action: onOpenHighlights) {
-                            Label("Highlights", systemImage: "film.stack")
-                        }
-                        .buttonStyle(SubtleButtonStyle())
-                        .help("Open ~/Movies/Overwatch in Finder")
+                        Text("Overwatch on Steam")
+                            .font(NotRecallTheme.font(18, .bold))
+                            .tracking(-0.3)
+                        StatusTag(text: statusTagText, color: statusTagColor)
                     }
+                    Text(subtitleText)
+                        .font(NotRecallTheme.font(12.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if let progress = downloadProgress {
-                    Divider()
-                    VStack(alignment: .leading, spacing: 7) {
-                        HStack(spacing: 10) {
-                            Text(downloadStatusText)
-                                .font(NotRecallTheme.font(12, .medium))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .contentTransition(.numericText())
-                            Spacer()
-                            Text("\(Int((progress * 100).rounded()))%")
-                                .font(NotRecallTheme.font(12, .semibold))
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .contentTransition(.numericText())
-                            Button("Cancel", action: onCancelDownload)
-                                .buttonStyle(SubtleButtonStyle(compact: true))
+                Spacer(minLength: 12)
+
+                HStack(spacing: 8) {
+                    if !hasMissingPrerequisites {
+                        if !isFullyInstalled {
+                            Button("Install NotRecall", action: onInstall)
+                                .buttonStyle(BrandButtonStyle())
+                                .keyboardShortcut(.defaultAction)
+                                .disabled(isBusy || !hasRuntimeSource)
+                        } else if overwatchInstalled && !overwatchConfigured {
+                            Button(action: onConfigureOverwatch) {
+                                Label("Set Up in Steam", systemImage: "wand.and.stars")
+                            }
+                            .buttonStyle(BrandButtonStyle())
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(isBusy || !hasSteamApp)
+                        } else if overwatchInstalled {
+                            Button(action: onPlayOverwatch) {
+                                Label("Play Overwatch", systemImage: "play.fill")
+                            }
+                            .buttonStyle(BrandButtonStyle())
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(isBusy || !hasSteamApp)
                         }
-                        SmoothProgressBar(fraction: progress)
                     }
+
+                    Button(action: onOpenHighlights) {
+                        Label("Highlights", systemImage: "film.stack")
+                    }
+                    .buttonStyle(SubtleButtonStyle())
+                    .help("Open ~/Movies/Overwatch in Finder")
                 }
             }
         }
@@ -289,15 +241,16 @@ struct OverwatchHeroCard: View {
 struct MetricsBentoRow: View {
     let warningCount: Int
     let hasCriticalWarning: Bool
-    let installedRecallVersion: String?
-    let availableUpdateVersion: String?
     let stagedRuntimeReady: Bool
+    let stagedRuntimeVersion: String?
+    let bundledRuntimeVersion: String?
+    let bundledRuntimeUpdateAvailable: Bool
     let shaderSizeFormatted: String
     let shaderPackCount: Int
     let anyShaderCompiling: Bool
     let anyShaderNeedsMacOSOptimization: Bool
     let onOpenShaders: () -> Void
-    let onOpenWhatsNew: () -> Void
+    let onUpdateBundledRuntime: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -311,12 +264,14 @@ struct MetricsBentoRow: View {
             )
 
             MetricTile(
-                label: "Recall Runtime",
-                value: installedRecallVersion.map { "v\($0)" } ?? (stagedRuntimeReady ? "Staged" : "Not Installed"),
-                caption: availableUpdateVersion.map { "Update v\($0) ready" } ?? (stagedRuntimeReady ? "Up to date" : "Download or choose local copy"),
-                symbol: availableUpdateVersion != nil ? "arrow.down.circle.fill" : "shippingbox.fill",
-                tint: availableUpdateVersion != nil ? NotRecallTheme.brand : (stagedRuntimeReady ? NotRecallTheme.healthy : NotRecallTheme.warning),
-                action: availableUpdateVersion != nil ? onOpenWhatsNew : nil
+                label: "Bundled Runtime",
+                value: stagedRuntimeVersion ?? (stagedRuntimeReady ? "Staged" : "Not Installed"),
+                caption: bundledRuntimeUpdateAvailable
+                    ? "New bundled build ready (\(bundledRuntimeVersion ?? "update"))"
+                    : (stagedRuntimeReady ? "Matches bundled Wine + DXMT" : "Ready to install offline"),
+                symbol: bundledRuntimeUpdateAvailable ? "arrow.triangle.2.circlepath.circle.fill" : "shippingbox.fill",
+                tint: bundledRuntimeUpdateAvailable ? NotRecallTheme.brand : (stagedRuntimeReady ? NotRecallTheme.healthy : NotRecallTheme.warning),
+                action: bundledRuntimeUpdateAvailable ? onUpdateBundledRuntime : nil
             )
 
             MetricTile(
@@ -462,8 +417,7 @@ struct OverviewHealthWarnings: View {
 struct RuntimeManagementCard: View {
     let activeRuntimeSource: URL?
     let hasCustomRuntime: Bool
-    let preferredDownloadTitle: String
-    let preferredDownloadSize: String?
+    let bundledRuntimeLabel: String
     let stagedRuntimeReady: Bool
     let isBusy: Bool
     let onChooseLocal: () -> Void
@@ -477,27 +431,24 @@ struct RuntimeManagementCard: View {
         SurfaceCard(padding: 16) {
             VStack(alignment: .leading, spacing: 12) {
                 CardHeader(
-                    title: "Recall Runtime & Installation",
-                    subtitle: "Choose a local Recall .dmg or Recall.app, or download and verify the latest GitHub release.",
+                    title: "Runtime & Installation",
+                    subtitle: "Uses the Wine + DXMT runtime bundled inside NotRecall.app, or an optional custom local archive.",
                     symbol: "shippingbox"
                 )
 
                 HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: activeRuntimeSource != nil ? "checkmark.circle.fill" : "arrow.down.circle.fill")
+                    Image(systemName: activeRuntimeSource != nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(activeRuntimeSource != nil ? NotRecallTheme.healthy : NotRecallTheme.brand)
+                        .foregroundStyle(activeRuntimeSource != nil ? NotRecallTheme.healthy : NotRecallTheme.warning)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(hasCustomRuntime ? "Custom Recall File" : (activeRuntimeSource != nil ? "Local Recall Copy" : "GitHub Release Download"))
+                        Text(hasCustomRuntime ? "Custom Runtime Override" : "Bundled Runtime (\(bundledRuntimeLabel))")
                             .font(NotRecallTheme.font(13, .semibold))
-                        Text(
-                            activeRuntimeSource?.path
-                                ?? "Downloads \(preferredDownloadTitle) from GitHub\(preferredDownloadSize.map { " (\($0))" } ?? "")"
-                        )
-                        .font(NotRecallTheme.font(11.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                        Text(activeRuntimeSource?.path ?? "Bundled runtime.tar.gz not found — rebuild with 'make build-app' or choose a local archive.")
+                            .font(NotRecallTheme.font(11.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
 
                     Spacer(minLength: 8)
@@ -517,19 +468,19 @@ struct RuntimeManagementCard: View {
                 Divider()
 
                 HStack(spacing: 8) {
-                    Button(activeRuntimeSource != nil ? "Install / Update" : "Download & Install", action: onInstallOrUpdate)
+                    Button("Install / Update", action: onInstallOrUpdate)
                         .buttonStyle(BrandButtonStyle(compact: true))
-                        .disabled(isBusy)
+                        .disabled(isBusy || activeRuntimeSource == nil)
 
                     if stagedRuntimeReady {
                         Button("Update Runtime Only", action: onUpdateRuntimeOnly)
                             .buttonStyle(SubtleButtonStyle(compact: true))
-                            .disabled(isBusy)
+                            .disabled(isBusy || activeRuntimeSource == nil)
                     }
 
                     Button("Dry Run", action: onDryRun)
                         .buttonStyle(SubtleButtonStyle(compact: true))
-                        .disabled(isBusy)
+                        .disabled(isBusy || activeRuntimeSource == nil)
 
                     Spacer()
 
@@ -662,7 +613,7 @@ struct EnvironmentSnapshotCard: View {
                         action: onOpenNotProton
                     )
                     StackStatusRow(
-                        title: "Recall Runtime",
+                        title: "Wine + DXMT Runtime",
                         detail: stagedRuntimeReady ? runtimeSummary : "Not staged yet",
                         ok: stagedRuntimeReady
                     )

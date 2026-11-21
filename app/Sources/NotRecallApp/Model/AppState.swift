@@ -68,23 +68,20 @@ final class AppState: ObservableObject {
     @Published var steamAppURL: URL?
     @Published var notProtonAppURL: URL?
     @Published var notProtonBridgeReady = false
-    @Published var recallRuntimeDetected: URL?
+    @Published var bundledRuntimeURL: URL?
+    @Published var bundledRuntimeVersion: String?
+    @Published var bundledDXMTBase: String?
     @Published var customRuntimeURL: URL?
     @Published var stagedRuntimeReady = false
     @Published var stagedRuntimeVersion: String?
-    @Published var installedRecallVersion: String?
-    @Published var latestRecallRelease: RecallReleaseInfo?
-    @Published var isCheckingForUpdates = false
+    @Published var stagedDXMTBase: String?
     @Published var selectedSection: SidebarSection = .overview
-    @Published var showWhatsNewSheet = false
     @Published var confirmForceQuit = false
     @Published var confirmResetDisplay = false
     @Published var confirmUninstall = false
     @Published var pendingClearShaderEntry: ShaderCacheEntry?
     @Published var pendingRebuildShaderEntry: ShaderCacheEntry?
     @Published var diagnosticsCopied = false
-    @Published var downloadProgress: Double?
-    @Published var downloadStatusText = ""
     @Published var steamToolInstalled = false
     @Published var helpersInstalled = false
     @Published var healthWarnings: [HealthWarning] = []
@@ -108,9 +105,6 @@ final class AppState: ObservableObject {
         set { if !newValue { pendingRebuildShaderEntry = nil } }
     }
 
-    private var hasCheckedUpdates = false
-    private var activeDownloadTask: Task<Void, Never>?
-
     let home = FileManager.default.homeDirectoryForCurrentUser
 
     var notProtonSupport: URL { home.appending(path: "Library/Application Support/notproton") }
@@ -119,19 +113,18 @@ final class AppState: ObservableObject {
     var steamConfigVDF: URL { home.appending(path: "Library/Application Support/Steam/config/config.vdf") }
     var overwatchHighlightsDir: URL { home.appending(path: "Movies/Overwatch") }
 
-    var activeRuntimeSource: URL? { customRuntimeURL ?? recallRuntimeDetected }
+    var activeRuntimeSource: URL? { customRuntimeURL ?? bundledRuntimeURL }
     var overwatchConfiguredForNotRecall: Bool { overwatchCompatTool == "notrecall-proton" }
-    var preferredDownloadRelease: RecallReleaseInfo { latestRecallRelease ?? .pinnedDefault }
 
-    var availableRecallUpdate: RecallReleaseInfo? {
-        guard let latest = latestRecallRelease else { return nil }
-        if let installed = installedRecallVersion, !installed.isEmpty {
-            return RecallVersion.compare(latest.version, installed) == .orderedDescending ? latest : nil
+    var bundledRuntimeUpdateAvailable: Bool {
+        guard stagedRuntimeReady, customRuntimeURL == nil, let bundledVer = bundledRuntimeVersion else { return false }
+        if let stagedVer = stagedRuntimeVersion, stagedVer != bundledVer {
+            return true
         }
-        if stagedRuntimeReady {
-            return RecallVersion.compare(latest.version, RecallReleaseInfo.pinnedDefault.version) == .orderedDescending ? latest : nil
+        if let bDxmt = bundledDXMTBase, !bDxmt.isEmpty, let sDxmt = stagedDXMTBase, sDxmt != bDxmt {
+            return true
         }
-        return nil
+        return false
     }
 
     var hasMissingPrerequisites: Bool {
@@ -160,16 +153,27 @@ final class AppState: ObservableObject {
 
     var stagedRuntimeSummary: String {
         var parts: [String] = []
-        if let recallVer = installedRecallVersion {
-            parts.append("Recall \(recallVer)")
-        }
         if let rtVer = stagedRuntimeVersion {
             parts.append(rtVer)
+        }
+        if let dxmt = stagedDXMTBase, !dxmt.isEmpty {
+            parts.append("dxmt \(String(dxmt.prefix(7)))")
         }
         if parts.isEmpty {
             return notRecallSupport.appending(path: "runtime").path
         }
         return parts.joined(separator: " · ")
+    }
+
+    var bundledRuntimeLabel: String {
+        var parts: [String] = []
+        if let ver = bundledRuntimeVersion {
+            parts.append(ver)
+        }
+        if let dxmt = bundledDXMTBase, !dxmt.isEmpty {
+            parts.append("dxmt \(String(dxmt.prefix(7)))")
+        }
+        return parts.isEmpty ? "Bundled Wine + DXMT" : parts.joined(separator: " · ")
     }
 
     var totalShaderCacheFormatted: String {
@@ -200,12 +204,14 @@ final class AppState: ObservableObject {
         let steamAppURL: URL?
         let notProtonAppURL: URL?
         let notProtonBridgeReady: Bool
+        let bundledRuntimeURL: URL?
+        let bundledRuntimeVersion: String?
+        let bundledDXMTBase: String?
         let stagedRuntimeReady: Bool
         let stagedRuntimeVersion: String?
-        let installedRecallVersion: String?
+        let stagedDXMTBase: String?
         let steamToolInstalled: Bool
         let helpersInstalled: Bool
-        let recallRuntimeDetected: URL?
         let steamLibraryCount: Int
         let rosettaInstalled: Bool
         let healthWarnings: [HealthWarning]
@@ -222,13 +228,6 @@ final class AppState: ObservableObject {
         )
         macOSSupported = osOK
 
-        if !hasCheckedUpdates {
-            hasCheckedUpdates = true
-            Task { [weak self] in
-                await self?.checkForRecallUpdates(silent: true)
-            }
-        }
-
         let homeDir = home
         let npSupport = notProtonSupport
         let nrSupport = notRecallSupport
@@ -240,12 +239,11 @@ final class AppState: ObservableObject {
             let steamApp = Self.detectApp(named: "Steam.app", home: homeDir)
             let notProtonApp = Self.detectApp(named: "NotProton.app", home: homeDir)
             let bridgeReady = fm.fileExists(atPath: npSupport.appending(path: "bridge").path)
+            let bundled = NotRecallInstaller.locateBundledRuntime()
             let runtimeReady = fm.isExecutableFile(atPath: nrSupport.appending(path: "runtime/bin/wine").path)
-            let runtimeVer = Self.readRuntimeVersion(in: nrSupport.appending(path: "runtime"))
-            let recallVer = Self.readInstalledRecallVersion(in: nrSupport)
+            let (runtimeVer, dxmtBase) = Self.readRuntimeInfo(in: nrSupport.appending(path: "runtime"))
             let toolInstalled = fm.isExecutableFile(atPath: compatTool.appending(path: "run").path)
             let helpersReady = fm.isExecutableFile(atPath: nrSupport.appending(path: "helpers/ow2-pipeline").path)
-            let detectedRuntime = Self.detectRecallRuntime(home: homeDir)
 
             let libraries = Self.discoverSteamLibraries(home: homeDir)
             let rosetta = Self.probeRosetta()
@@ -259,12 +257,14 @@ final class AppState: ObservableObject {
                 steamAppURL: steamApp,
                 notProtonAppURL: notProtonApp,
                 notProtonBridgeReady: bridgeReady,
+                bundledRuntimeURL: bundled?.archiveURL,
+                bundledRuntimeVersion: bundled?.version,
+                bundledDXMTBase: bundled?.dxmtBase,
                 stagedRuntimeReady: runtimeReady,
                 stagedRuntimeVersion: runtimeVer,
-                installedRecallVersion: recallVer,
+                stagedDXMTBase: dxmtBase,
                 steamToolInstalled: toolInstalled,
                 helpersInstalled: helpersReady,
-                recallRuntimeDetected: detectedRuntime,
                 steamLibraryCount: libraries.count,
                 rosettaInstalled: rosetta,
                 healthWarnings: warnings,
@@ -279,12 +279,14 @@ final class AppState: ObservableObject {
         steamAppURL = snapshot.steamAppURL
         notProtonAppURL = snapshot.notProtonAppURL
         notProtonBridgeReady = snapshot.notProtonBridgeReady
+        bundledRuntimeURL = snapshot.bundledRuntimeURL
+        bundledRuntimeVersion = snapshot.bundledRuntimeVersion
+        bundledDXMTBase = snapshot.bundledDXMTBase
         stagedRuntimeReady = snapshot.stagedRuntimeReady
         stagedRuntimeVersion = snapshot.stagedRuntimeVersion
-        installedRecallVersion = snapshot.installedRecallVersion
+        stagedDXMTBase = snapshot.stagedDXMTBase
         steamToolInstalled = snapshot.steamToolInstalled
         helpersInstalled = snapshot.helpersInstalled
-        recallRuntimeDetected = snapshot.recallRuntimeDetected
         steamLibraryCount = snapshot.steamLibraryCount
         rosettaInstalled = snapshot.rosettaInstalled
         healthWarnings = snapshot.healthWarnings
@@ -342,118 +344,31 @@ final class AppState: ObservableObject {
         }
     }
 
-    func checkForRecallUpdates(silent: Bool = false) async {
-        guard !isCheckingForUpdates else { return }
-        isCheckingForUpdates = true
-        defer { isCheckingForUpdates = false }
-        do {
-            let latest = try await RecallReleaseService.fetchLatestRelease()
-            latestRecallRelease = latest
-            if !silent {
-                if let installed = installedRecallVersion,
-                   RecallVersion.compare(latest.version, installed) == .orderedDescending {
-                    statusMessage = "Recall \(latest.version) is available (installed: \(installed))."
-                    showWhatsNewSheet = true
-                } else if let installed = installedRecallVersion {
-                    statusMessage = "Recall \(installed) is up to date."
-                } else {
-                    statusMessage = "Latest Recall release on GitHub: \(latest.version)."
-                }
-            }
-        } catch {
-            if !silent {
-                statusMessage = "Could not check for Recall updates: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    func downloadAndInstallRecall(_ release: RecallReleaseInfo, runtimeOnly: Bool = false) {
-        guard !isBusy else { return }
-        activeDownloadTask?.cancel()
-        activeDownloadTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.isBusy = true
-            self.downloadProgress = 0
-            self.downloadStatusText = "Downloading \(release.dmgName)…"
-            self.statusMessage = "Downloading Recall \(release.version) from GitHub…"
-            defer {
-                self.downloadProgress = nil
-                self.downloadStatusText = ""
-                self.isBusy = false
-                self.activeDownloadTask = nil
-            }
-            do {
-                let dmgURL = try await RecallDownloader.download(release: release) { [weak self] fraction, written, total in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.downloadProgress = fraction
-                        let wStr = ByteCountFormatter.string(fromByteCount: written, countStyle: .file)
-                        if total > 0 {
-                            let tStr = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
-                            self.downloadStatusText = "Downloading \(release.dmgName): \(wStr) / \(tStr)"
-                        } else {
-                            self.downloadStatusText = "Downloading \(release.dmgName): \(wStr)"
-                        }
-                    }
-                }
-                self.downloadProgress = 1.0
-                self.downloadStatusText = "Verifying & extracting Recall \(release.version)…"
-                let options = NotRecallInstallOptions(runtimeSource: dmgURL, runtimeOnly: runtimeOnly)
-                let title = runtimeOnly ? "Update Runtime Only (Recall \(release.version))" : "Install NotRecall (Recall \(release.version))"
-                await self.runInstallInner(options: options, logTitle: title, switchToLogs: false)
-            } catch is CancellationError {
-                self.statusMessage = "Cancelled Recall \(release.version) download."
-            } catch let err as RecallDownloadError {
-                if case .cancelled = err {
-                    self.statusMessage = "Cancelled Recall \(release.version) download."
-                } else {
-                    self.statusMessage = "Failed to download Recall \(release.version): \(err.localizedDescription)"
-                }
-            } catch {
-                self.statusMessage = "Failed to download Recall \(release.version): \(error.localizedDescription)"
-            }
-        }
-    }
-
-    func cancelDownload() {
-        activeDownloadTask?.cancel()
-        statusMessage = "Cancelling download…"
-    }
-
     func selectLocalRuntime() {
         let panel = NSOpenPanel()
-        panel.title = "Select Recall Release or Runtime"
-        panel.message = "Choose a Recall .dmg, Recall.app, runtime.tar.gz archive, or an unpacked runtime folder containing bin/wine."
+        panel.title = "Select Custom Runtime"
+        panel.message = "Choose a runtime.tar.gz archive or an unpacked runtime folder containing bin/wine."
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        var types: [UTType] = [.gzip, .folder, .applicationBundle]
-        if let dmgType = UTType(filenameExtension: "dmg") {
-            types.insert(dmgType, at: 0)
-        }
-        panel.allowedContentTypes = types
+        panel.allowedContentTypes = [.gzip, .folder]
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let fm = FileManager.default
         let lower = url.lastPathComponent.lowercased()
-        let isDMG = lower.hasSuffix(".dmg")
-        let isRecallApp = lower.hasSuffix(".app") && (
-            fm.fileExists(atPath: url.appending(path: "Contents/Resources/runtime.tar.gz").path) ||
-            fm.isExecutableFile(atPath: url.appending(path: "Contents/Resources/runtime/bin/wine").path)
-        )
         let isArchive = lower.hasSuffix(".tar.gz") || lower.hasSuffix(".tgz")
         let isUnpacked = fm.isExecutableFile(atPath: url.appending(path: "bin/wine").path)
-        if isDMG || isRecallApp || isArchive || isUnpacked {
+        if isArchive || isUnpacked {
             customRuntimeURL = url
             statusMessage = "Selected custom runtime: \(url.lastPathComponent)"
         } else {
-            statusMessage = "Selected item is not a Recall .dmg, Recall.app, .tar.gz archive, or runtime folder containing bin/wine."
+            statusMessage = "Selected item is not a .tar.gz runtime archive or runtime folder containing bin/wine."
         }
     }
 
     func clearCustomRuntime() {
         customRuntimeURL = nil
-        statusMessage = "Reverted to default Recall runtime source."
+        statusMessage = "Reverted to bundled runtime."
     }
 
     func restartSteam() async {
@@ -857,9 +772,9 @@ final class AppState: ObservableObject {
         Steam.app:          \(steamAppURL?.path ?? "missing")
         Steam Libraries:    \(steamLibraryCount)
         NotProton Bridge:   \(notProtonBridgeReady ? "ready" : "missing")
+        Bundled Runtime:    \(bundledRuntimeLabel) (\(bundledRuntimeURL?.path ?? "missing"))
         Runtime Source:     \(activeRuntimeSource?.path ?? "none")
-        Recall Release:     \(installedRecallVersion ?? "unknown")
-        Staged Runtime:     \(stagedRuntimeReady ? (stagedRuntimeVersion ?? "ready") : "missing")
+        Staged Runtime:     \(stagedRuntimeReady ? stagedRuntimeSummary : "missing")
         Overwatch (2357570): \(overwatchInstalled ? "installed" : "not found") (compat tool: \(overwatchCompatTool ?? "unset"))
         Steam Compat Tool:  \(steamToolInstalled ? "installed" : "missing")
         Shader Helpers:     \(helpersInstalled ? "installed" : "missing")
@@ -1008,64 +923,15 @@ final class AppState: ObservableObject {
         return candidates.first { fm.fileExists(atPath: $0.path) }
     }
 
-    nonisolated private static func readRuntimeVersion(in runtimeDir: URL) -> String? {
+    nonisolated private static func readRuntimeInfo(in runtimeDir: URL) -> (String?, String?) {
         let manifest = runtimeDir.appending(path: "runtime.json")
         guard let data = try? Data(contentsOf: manifest),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let version = json["version"] as? String else {
-            return nil
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return (nil, nil)
         }
-        return version
+        return (json["version"] as? String, json["dxmtBase"] as? String)
     }
 
-    nonisolated private static func readInstalledRecallVersion(in supportDir: URL) -> String? {
-        let releaseFile = supportDir.appending(path: "recall-release.json")
-        guard let data = try? Data(contentsOf: releaseFile),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let version = json["appVersion"] as? String,
-              !version.isEmpty else {
-            return nil
-        }
-        return version
-    }
-
-    nonisolated private static func detectRecallRuntime(home: URL) -> URL? {
-        let fm = FileManager.default
-        // 1. Prefer an installed Recall.app bundle so runtime + shader helpers stay version-locked.
-        let appCandidates = [
-            URL(filePath: "/Applications/Recall.app"),
-            home.appending(path: "Applications/Recall.app")
-        ]
-        if let hit = appCandidates.first(where: {
-            fm.fileExists(atPath: $0.appending(path: "Contents/Resources/runtime.tar.gz").path) ||
-            fm.isExecutableFile(atPath: $0.appending(path: "Contents/Resources/runtime/bin/wine").path)
-        }) {
-            return hit
-        }
-        // 2. Fallback: existing Overwatch2Mac unpacked runtimes on disk.
-        let owRoot = home.appending(path: "Library/Application Support/Overwatch2Mac")
-        let runtimesDir = owRoot.appending(path: "runtimes")
-        if let versions = try? fm.contentsOfDirectory(at: runtimesDir, includingPropertiesForKeys: [.contentModificationDateKey]) {
-            let sorted = versions.sorted {
-                let d0 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                let d1 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                return d0 > d1
-            }
-            if let hit = sorted.first(where: { fm.isExecutableFile(atPath: $0.appending(path: "bin/wine").path) }) {
-                return hit
-            }
-        }
-        let unpackedCandidates = [
-            owRoot.appending(path: "runtime/current"),
-            owRoot.appending(path: "runtime")
-        ]
-        if let hit = unpackedCandidates.first(where: { fm.isExecutableFile(atPath: $0.appending(path: "bin/wine").path) }) {
-            return hit
-        }
-        return nil
-    }
-
-    // Parse Steam's libraryfolders.vdf to discover primary + external/secondary Steam libraries.
     nonisolated private static func discoverSteamLibraries(home: URL) -> [URL] {
         let fm = FileManager.default
         let defaultRoot = home.appending(path: "Library/Application Support/Steam")
@@ -1097,7 +963,6 @@ final class AppState: ObservableObject {
         return libraries
     }
 
-    // Parse appmanifest_<appid>.acf across all Steam libraries for human-readable game titles.
     nonisolated private static func loadSteamAppNames(across libraries: [URL]) -> [String: String] {
         let fm = FileManager.default
         var names: [String: String] = [:]

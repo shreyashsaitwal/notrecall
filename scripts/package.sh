@@ -1,7 +1,7 @@
 #!/bin/sh
-# Packages NotRecall as a lightweight macOS .app bundle (build/NotRecall.app)
-# and optional release ZIP + DMG (+ SHA-256). Recall's runtime and shader
-# pipeline helpers are downloaded & verified on demand from GitHub Releases.
+# Packages NotRecall as a self-contained macOS .app bundle (build/NotRecall.app)
+# with its bundled Wine + DXMT runtime and shader pipeline helpers, plus
+# optional release ZIP + DMG (+ SHA-256).
 set -e
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
@@ -94,11 +94,27 @@ fi
 cp -f "$PROJECT_DIR/scripts/pipeline_hook.sh" "$RES_DIR/scripts/pipeline_hook.sh"
 chmod 755 "$RES_DIR/scripts/pipeline_hook.sh"
 
-if [ -x "$SYSINFO_BIN" ]; then
-  cp -f "$SYSINFO_BIN" "$RES_DIR/helpers/notrecall-sysinfo"
-  chmod 755 "$RES_DIR/helpers/notrecall-sysinfo"
+# Embed native helpers (sysinfo + shader pipeline optimizer helpers).
+for helper in notrecall-sysinfo ow2-pipeline libpipeline_prepare.dylib pipeline-prepare pipeline-warm; do
+  if [ -f "$OUT_DIR/helpers/$helper" ]; then
+    cp -f "$OUT_DIR/helpers/$helper" "$RES_DIR/helpers/$helper"
+    chmod 755 "$RES_DIR/helpers/$helper"
+  elif [ "$STRICT" -eq 1 ]; then
+    echo "Error: required bundled helper missing at $OUT_DIR/helpers/$helper (run 'make build-runtime' first)" >&2
+    exit 1
+  fi
+done
+
+# Embed self-contained Wine + DXMT runtime archive and manifest.
+RUNTIME_TAR="$OUT_DIR/runtime/runtime.tar.gz"
+RUNTIME_META="$OUT_DIR/runtime/bundled-runtime.json"
+if [ -f "$RUNTIME_TAR" ]; then
+  cp -c "$RUNTIME_TAR" "$RES_DIR/runtime.tar.gz" 2>/dev/null || cp -f "$RUNTIME_TAR" "$RES_DIR/runtime.tar.gz"
+  if [ -f "$RUNTIME_META" ]; then
+    cp -f "$RUNTIME_META" "$RES_DIR/bundled-runtime.json"
+  fi
 elif [ "$STRICT" -eq 1 ]; then
-  echo "Error: notrecall-sysinfo helper missing at $SYSINFO_BIN" >&2
+  echo "Error: bundled runtime archive missing at $RUNTIME_TAR (run 'make build-runtime' first)" >&2
   exit 1
 fi
 
@@ -156,9 +172,11 @@ sign_item() {
 }
 
 # Sign nested Mach-O helpers inside-out before signing the app bundle.
-if [ -f "$RES_DIR/helpers/notrecall-sysinfo" ]; then
-  sign_item "$RES_DIR/helpers/notrecall-sysinfo"
-fi
+for helper in libpipeline_prepare.dylib notrecall-sysinfo ow2-pipeline pipeline-prepare pipeline-warm; do
+  if [ -f "$RES_DIR/helpers/$helper" ]; then
+    sign_item "$RES_DIR/helpers/$helper"
+  fi
+done
 sign_item "$APP_BUNDLE"
 /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
 echo "    OK: $APP_BUNDLE"

@@ -29,14 +29,6 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    Task { await state.checkForRecallUpdates(silent: false) }
-                } label: {
-                    Label(state.isCheckingForUpdates ? "Checking…" : "Check Updates", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .help("Check GitHub for newer Recall runtime releases (⇧⌘U)")
-                .disabled(state.isCheckingForUpdates || state.isBusy)
-
-                Button {
                     state.copyDiagnostics()
                 } label: {
                     Label(
@@ -54,22 +46,6 @@ struct ContentView: View {
                 }
                 .help("Refresh installation, Steam, and shader status (⌘R)")
                 .disabled(state.isBusy)
-            }
-        }
-        .sheet(isPresented: $state.showWhatsNewSheet) {
-            if let release = state.availableRecallUpdate ?? state.latestRecallRelease ?? Optional(RecallReleaseInfo.pinnedDefault) {
-                WhatsNewSheet(
-                    release: release,
-                    installedVersion: state.installedRecallVersion,
-                    isBusy: state.isBusy,
-                    onUpdate: {
-                        state.showWhatsNewSheet = false
-                        state.downloadAndInstallRecall(release, runtimeOnly: state.stagedRuntimeReady)
-                    },
-                    onDismiss: {
-                        state.showWhatsNewSheet = false
-                    }
-                )
             }
         }
         .alert("Force quit Overwatch?", isPresented: $state.confirmForceQuit) {
@@ -122,7 +98,7 @@ struct ContentView: View {
                 Task { await state.uninstallNotRecall() }
             }
         } message: {
-            Text("This removes NotRecall’s Steam compatibility tool, staged runtime, settings, and downloaded Recall cache. Your Steam games and saved highlights stay untouched.")
+            Text("This removes NotRecall’s Steam compatibility tool, staged runtime, and settings. Your Steam games and saved highlights stay untouched.")
         }
         .task(id: state.anyShaderCompiling) {
             guard state.anyShaderCompiling else { return }
@@ -173,9 +149,12 @@ struct SidebarView: View {
             SidebarStatusFooter(
                 isReadyToPlay: state.isReadyToPlay,
                 hasMissingPrerequisites: state.hasMissingPrerequisites,
-                installedRecallVersion: state.installedRecallVersion,
-                availableUpdateVersion: state.availableRecallUpdate?.version,
-                onOpenWhatsNew: { state.showWhatsNewSheet = true }
+                stagedRuntimeReady: state.stagedRuntimeReady,
+                stagedRuntimeVersion: state.stagedRuntimeVersion,
+                bundledRuntimeUpdateAvailable: state.bundledRuntimeUpdateAvailable,
+                onUpdateRuntime: {
+                    Task { await state.installNotRecall(runtimeSource: nil, runtimeOnly: true) }
+                }
             )
             .padding(12)
         }
@@ -216,9 +195,10 @@ struct SidebarRow: View {
 struct SidebarStatusFooter: View {
     let isReadyToPlay: Bool
     let hasMissingPrerequisites: Bool
-    let installedRecallVersion: String?
-    let availableUpdateVersion: String?
-    let onOpenWhatsNew: () -> Void
+    let stagedRuntimeReady: Bool
+    let stagedRuntimeVersion: String?
+    let bundledRuntimeUpdateAvailable: Bool
+    let onUpdateRuntime: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -226,18 +206,22 @@ struct SidebarStatusFooter: View {
                 Circle()
                     .fill(isReadyToPlay ? NotRecallTheme.healthy : (hasMissingPrerequisites ? NotRecallTheme.warning : NotRecallTheme.brand))
                     .frame(width: 7, height: 7)
-                Text(isReadyToPlay ? "Ready to Play" : (hasMissingPrerequisites ? "Setup Required" : "Installed"))
+                Text(isReadyToPlay ? "Ready to Play" : (hasMissingPrerequisites ? "Setup Required" : (stagedRuntimeReady ? "Installed" : "Not Installed")))
                     .font(NotRecallTheme.font(11.5, .semibold))
                     .foregroundStyle(.primary)
             }
 
-            if let updateVer = availableUpdateVersion {
-                Button("Recall \(updateVer) available →", action: onOpenWhatsNew)
+            if bundledRuntimeUpdateAvailable {
+                Button("Update bundled runtime →", action: onUpdateRuntime)
                     .buttonStyle(.borderless)
                     .font(NotRecallTheme.font(11, .medium))
                     .foregroundStyle(NotRecallTheme.brand)
-            } else if let recallVer = installedRecallVersion {
-                Text("Recall Runtime \(recallVer)")
+            } else if let ver = stagedRuntimeVersion {
+                Text("Runtime \(ver)")
+                    .font(NotRecallTheme.font(11))
+                    .foregroundStyle(.secondary)
+            } else if stagedRuntimeReady {
+                Text("Runtime staged")
                     .font(NotRecallTheme.font(11))
                     .foregroundStyle(.secondary)
             } else {

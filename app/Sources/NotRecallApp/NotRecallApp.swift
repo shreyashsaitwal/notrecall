@@ -12,19 +12,6 @@ struct NotRecallApp: App {
         }
         .windowResizability(.contentMinSize)
         .commands {
-            CommandGroup(after: .appInfo) {
-                Button("Check for Recall Updates…") {
-                    Task { await state.checkForRecallUpdates(silent: false) }
-                }
-                .keyboardShortcut("u", modifiers: [.command, .shift])
-                .disabled(state.isCheckingForUpdates || state.isBusy)
-
-                Button("What’s New in Recall…") {
-                    state.showWhatsNewSheet = true
-                }
-                .disabled(state.availableRecallUpdate == nil && state.latestRecallRelease == nil)
-            }
-
             CommandMenu("Game") {
                 Button("Play Overwatch") {
                     state.playOverwatch()

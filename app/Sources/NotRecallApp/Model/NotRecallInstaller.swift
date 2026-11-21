@@ -5,7 +5,6 @@ struct NotRecallInstallOptions: Sendable {
     var runtimeSource: URL? = nil
     var runtimeOnly: Bool = false
     var dryRun: Bool = false
-    var recallTeamID: String? = ProcessInfo.processInfo.environment["RECALL_TEAM_ID"]
 }
 
 struct NotRecallOperationResult: Sendable {
@@ -14,10 +13,39 @@ struct NotRecallOperationResult: Sendable {
     let summary: String
 }
 
+struct BundledRuntimeInfo: Sendable {
+    let archiveURL: URL
+    let version: String?
+    let dxmtBase: String?
+    let sha256: String?
+}
+
 enum NotRecallInstaller {
     private struct InstallerError: LocalizedError {
         let message: String
         var errorDescription: String? { message }
+    }
+
+    static func locateBundledRuntime() -> BundledRuntimeInfo? {
+        guard let resRoot = locateResourcesRoot() else { return nil }
+        let fm = FileManager.default
+        let candidates = [
+            (resRoot.appending(path: "runtime.tar.gz"), resRoot.appending(path: "bundled-runtime.json")),
+            (resRoot.appending(path: "build/runtime/runtime.tar.gz"), resRoot.appending(path: "build/runtime/bundled-runtime.json")),
+        ]
+        for (archiveURL, metaURL) in candidates where fm.fileExists(atPath: archiveURL.path) {
+            var version: String?
+            var dxmtBase: String?
+            var sha: String?
+            if let data = try? Data(contentsOf: metaURL),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                version = json["version"] as? String
+                dxmtBase = json["dxmtBase"] as? String
+                sha = json["runtimeSHA256"] as? String
+            }
+            return BundledRuntimeInfo(archiveURL: archiveURL, version: version, dxmtBase: dxmtBase, sha256: sha)
+        }
+        return nil
     }
 
     static func install(options: NotRecallInstallOptions = NotRecallInstallOptions()) -> NotRecallOperationResult {
@@ -40,17 +68,13 @@ enum NotRecallInstaller {
         let toolDst = steamCompatDir.appending(path: "notrecall-proton")
         let pluginDst = npSupport.appending(path: "plugins/notrecall.conf")
         let resourcesRoot = locateResourcesRoot()
+        let bundled = locateBundledRuntime()
 
         let pid = ProcessInfo.processInfo.processIdentifier
         let stageRuntime = nrSupport.appending(path: ".runtime.staging.\(pid)")
         let oldRuntime = nrSupport.appending(path: ".runtime.old.\(pid)")
-        var dmgMount: URL?
 
         defer {
-            if let mount = dmgMount, fm.fileExists(atPath: mount.path) {
-                _ = runProcess("/usr/bin/hdiutil", ["detach", "-force", mount.path])
-                try? fm.removeItem(at: mount)
-            }
             if fm.fileExists(atPath: stageRuntime.path) {
                 try? fm.removeItem(at: stageRuntime)
             }
@@ -61,128 +85,46 @@ enum NotRecallInstaller {
         }
 
         do {
-            // 1. Locate Recall runtime source.
-            guard var runtimeSrc = options.runtimeSource ?? findRecallRuntime(home: home) else {
+            // 1. Locate runtime source (custom override or bundled runtime.tar.gz).
+            let runtimeSrc: URL
+            var expectedSHA: String?
+            var runtimeVersion: String?
+            if let custom = options.runtimeSource {
+                runtimeSrc = custom
+            } else if let bundled {
+                runtimeSrc = bundled.archiveURL
+                expectedSHA = bundled.sha256
+                runtimeVersion = bundled.version
+            } else {
                 throw InstallerError(
-                    message: "Could not locate a Recall release (.dmg, Recall.app, runtime.tar.gz, or bin/wine). Download a release from GitHub or choose a local Recall file."
+                    message: "Bundled runtime.tar.gz not found inside NotRecall.app. Rebuild with 'make build-app' or choose a local runtime archive/folder."
                 )
             }
 
-            var recallAppSrc: URL?
-            var recallHelpersDir: URL?
-            var recallAppVersion: String?
-            var recallRuntimeVersion: String?
-            var recallExpectedSHA: String?
-
-            // 2. Detect source type (.dmg, .app, archive, or unpacked directory).
-            let lowerName = runtimeSrc.lastPathComponent.lowercased()
-            if lowerName.hasSuffix(".dmg") {
-                guard fm.fileExists(atPath: runtimeSrc.path) else {
-                    throw InstallerError(message: "DMG not found: \(runtimeSrc.path)")
-                }
-                if options.dryRun {
-                    log("[dry-run] attach read-only DMG \"\(runtimeSrc.path)\", verify Recall.app signature & release.json SHA-256, and extract runtime + helpers")
-                } else {
-                    let mountDir = fm.temporaryDirectory.appending(path: "notrecall-dmg-\(UUID().uuidString)")
-                    try fm.createDirectory(at: mountDir, withIntermediateDirectories: true)
-                    dmgMount = mountDir
-                    log("==> Mounting Recall DMG: \(runtimeSrc.path)")
-                    let attach = runProcess("/usr/bin/hdiutil", [
-                        "attach", "-nobrowse", "-readonly", "-noverify",
-                        "-mountpoint", mountDir.path, runtimeSrc.path
-                    ])
-                    guard attach.status == 0 else {
-                        throw InstallerError(message: "Failed to mount DMG: \(attach.output.trimmingCharacters(in: .whitespacesAndNewlines))")
-                    }
-                    let directApp = mountDir.appending(path: "Recall.app")
-                    if isDirectory(directApp) {
-                        recallAppSrc = directApp
-                    } else if let items = try? fm.contentsOfDirectory(at: mountDir, includingPropertiesForKeys: nil) {
-                        recallAppSrc = items.first {
-                            $0.pathExtension.lowercased() == "app" && isDirectory($0.appending(path: "Contents/Resources"))
-                        }
-                    }
-                    guard recallAppSrc != nil else {
-                        throw InstallerError(message: "No Recall.app bundle found inside \(runtimeSrc.path).")
-                    }
-                }
-            } else if lowerName.hasSuffix(".app") {
-                let appURL = runtimeSrc.standardizedFileURL
-                guard isDirectory(appURL.appending(path: "Contents/Resources")) else {
-                    throw InstallerError(message: "Invalid app bundle: \(appURL.path)")
-                }
-                recallAppSrc = appURL
-            }
-
-            if let appSrc = recallAppSrc {
-                if !options.dryRun {
-                    log("==> Verifying Recall.app code signature")
-                    var args = ["--verify", "--deep", "--strict"]
-                    if let teamID = options.recallTeamID, !teamID.isEmpty {
-                        args.append("-R=anchor apple generic and certificate leaf[subject.OU] = \"\(teamID)\"")
-                    }
-                    args.append(appSrc.path)
-                    let verify = runProcess("/usr/bin/codesign", args)
-                    guard verify.status == 0 else {
-                        throw InstallerError(message: "Recall.app code signature verification failed: \(verify.output.trimmingCharacters(in: .whitespacesAndNewlines))")
-                    }
-                }
-
-                let releaseJSON = appSrc.appending(path: "Contents/Resources/release.json")
-                if let data = try? Data(contentsOf: releaseJSON),
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    recallAppVersion = json["appVersion"] as? String
-                    recallRuntimeVersion = json["runtimeVersion"] as? String
-                    recallExpectedSHA = json["runtimeSHA256"] as? String
-                }
-
-                let bundledTarball = appSrc.appending(path: "Contents/Resources/runtime.tar.gz")
-                let bundledUnpacked = appSrc.appending(path: "Contents/Resources/runtime")
-                if fm.fileExists(atPath: bundledTarball.path) {
-                    runtimeSrc = bundledTarball
-                } else if fm.isExecutableFile(atPath: bundledUnpacked.appending(path: "bin/wine").path) {
-                    runtimeSrc = bundledUnpacked
-                } else {
-                    throw InstallerError(message: "\(appSrc.path) does not contain Contents/Resources/runtime.tar.gz or runtime/bin/wine.")
-                }
-
-                let helpersCandidate = appSrc.appending(path: "Contents/Helpers")
-                if isDirectory(helpersCandidate) {
-                    recallHelpersDir = helpersCandidate
-                }
-            }
-
             let resolvedLower = runtimeSrc.lastPathComponent.lowercased()
-            let runtimeIsArchive: Bool = {
-                if resolvedLower.hasSuffix(".tar.gz") || resolvedLower.hasSuffix(".tgz") {
-                    return fm.fileExists(atPath: runtimeSrc.path)
-                }
-                if resolvedLower.hasSuffix(".dmg") {
-                    return true // dry-run only
-                }
-                return false
-            }()
+            let runtimeIsArchive = (resolvedLower.hasSuffix(".tar.gz") || resolvedLower.hasSuffix(".tgz"))
+                && fm.fileExists(atPath: runtimeSrc.path)
 
             if !options.dryRun {
                 if !runtimeIsArchive && !fm.isExecutableFile(atPath: runtimeSrc.appending(path: "bin/wine").path) {
                     throw InstallerError(message: "Runtime source \(runtimeSrc.path) does not contain bin/wine.")
                 }
-                if runtimeIsArchive, let expectedSHA = recallExpectedSHA, !expectedSHA.isEmpty {
-                    log("==> Verifying runtime.tar.gz SHA-256 against Recall release.json")
+                if runtimeIsArchive, let sha = expectedSHA, !sha.isEmpty {
+                    log("==> Verifying bundled runtime.tar.gz SHA-256")
                     let actualSHA = try sha256Hex(of: runtimeSrc)
-                    if actualSHA.lowercased() != expectedSHA.lowercased() {
-                        throw InstallerError(message: "runtime.tar.gz SHA-256 mismatch (expected \(expectedSHA), got \(actualSHA)).")
+                    if actualSHA.lowercased() != sha.lowercased() {
+                        throw InstallerError(message: "runtime.tar.gz SHA-256 mismatch (expected \(sha), got \(actualSHA)).")
                     }
                 }
             }
 
-            // 3. Verify NotProton's Steamworks bridge is available.
+            // 2. Verify NotProton's Steamworks bridge is available.
             let bridgeSrc = npSupport.appending(path: "bridge")
             if !options.dryRun && !isDirectory(bridgeSrc) {
                 throw InstallerError(message: "NotProton bridge not found at \(bridgeSrc.path). Open NotProton and click Install first so its Steamworks bridge is staged.")
             }
 
-            log("==> Staging Recall runtime from: \(runtimeSrc.path)")
+            log("==> Staging runtime from: \(runtimeSrc.path)")
             if options.dryRun {
                 log("[dry-run] mkdir -p \(nrSupport.path) \(nrSupport.appending(path: "helpers").path)")
                 if !options.runtimeOnly {
@@ -219,8 +161,8 @@ enum NotRecallInstaller {
                 }
             }
 
-            // 4. Wire NotProton Steamworks bridge (lsteamclient + patched ntdll.dll).
-            log("==> Wiring NotProton Steamworks bridge into staged Recall runtime")
+            // 3. Wire NotProton Steamworks bridge (lsteamclient + patched ntdll.dll).
+            log("==> Wiring NotProton Steamworks bridge into staged runtime")
             if options.dryRun {
                 log("[dry-run] copy lsteamclient.{dll,so} and patched CrossOver 26.3 ntdll.dll")
             } else {
@@ -295,58 +237,16 @@ enum NotRecallInstaller {
                     }
                     throw error
                 }
-
-                // Record Recall release metadata & licenses when extracted from Recall.app.
-                let releaseDst = nrSupport.appending(path: "recall-release.json")
-                if let appSrc = recallAppSrc {
-                    let releaseSrc = appSrc.appending(path: "Contents/Resources/release.json")
-                    if fm.fileExists(atPath: releaseSrc.path) {
-                        let data = try Data(contentsOf: releaseSrc)
-                        try data.write(to: releaseDst, options: .atomic)
-                    } else if let appVer = recallAppVersion, !appVer.isEmpty {
-                        let payload: [String: String] = [
-                            "appVersion": appVer,
-                            "runtimeVersion": recallRuntimeVersion ?? ""
-                        ]
-                        let data = try JSONSerialization.data(withJSONObject: payload)
-                        try data.write(to: releaseDst, options: .atomic)
-                    } else {
-                        try? fm.removeItem(at: releaseDst)
-                    }
-
-                    let licensesSrc = appSrc.appending(path: "Contents/Resources/Licenses")
-                    if isDirectory(licensesSrc) {
-                        let licensesDst = nrSupport.appending(path: "licenses/recall")
-                        if fm.fileExists(atPath: licensesDst.path) {
-                            try fm.removeItem(at: licensesDst)
-                        }
-                        try fm.createDirectory(at: licensesDst.deletingLastPathComponent(), withIntermediateDirectories: true)
-                        try fm.copyItem(at: licensesSrc, to: licensesDst)
-                        for notice in ["PROJECT-LICENSE.txt", "NOTICE.txt"] {
-                            let srcNotice = appSrc.appending(path: "Contents/Resources/\(notice)")
-                            if fm.fileExists(atPath: srcNotice.path) {
-                                try copyReplacing(from: srcNotice, to: licensesDst.appending(path: notice))
-                            }
-                        }
-                    }
-                } else {
-                    try? fm.removeItem(at: releaseDst)
-                }
             }
 
-            // 5. Stage Recall shader helpers.
-            func stageRecallHelpers() throws {
-                log("==> Installing shader pipeline helpers")
+            // 4. Stage bundled shader pipeline helpers.
+            func stageShaderHelpers() throws {
+                log("==> Installing bundled shader pipeline helpers")
                 let bins = ["ow2-pipeline", "pipeline-prepare", "pipeline-warm", "libpipeline_prepare.dylib"]
                 var stagedCount = 0
                 var missing: [String] = []
                 for bin in bins {
-                    if let found = findHelperBinary(
-                        named: bin,
-                        recallHelpersDir: recallHelpersDir,
-                        resourcesRoot: resourcesRoot,
-                        home: home
-                    ) {
+                    if let found = findBundledHelper(named: bin, resourcesRoot: resourcesRoot) {
                         log("    Staging \(bin) from: \(found.path)")
                         let dst = nrSupport.appending(path: "helpers/\(bin)")
                         if options.dryRun {
@@ -355,29 +255,20 @@ enum NotRecallInstaller {
                             try copyReplacing(from: found, to: dst, permissions: 0o755)
                         }
                         stagedCount += 1
-                    } else if bin != "libpipeline_prepare.dylib" {
+                    } else {
                         missing.append(bin)
                     }
                 }
-                if !options.dryRun {
-                    let legacyPipeline = nrSupport.appending(path: "helpers/portable-pipeline")
-                    if entryExists(at: legacyPipeline) {
-                        try? fm.removeItem(at: legacyPipeline)
-                    }
-                }
                 if stagedCount == 0 {
-                    log("    Note: ow2-pipeline helper not found (in-game DXMT shader caching still works; use a Recall .dmg/.app to enable offline precompilation).")
+                    log("    Note: shader pipeline helpers not bundled (in-game DXMT shader caching still works).")
                 } else if !missing.isEmpty {
-                    log("    Warning: missing companion helper(s): \(missing.joined(separator: " "))")
-                    log("    Use a Recall .dmg or Recall.app for full offline precompilation & warming.")
+                    log("    Warning: missing bundled helper(s): \(missing.joined(separator: " "))")
                 }
             }
 
             if options.runtimeOnly {
-                if recallHelpersDir != nil {
-                    try stageRecallHelpers()
-                }
-                let verSuffix = recallAppVersion.map { " (Recall \($0))" } ?? ""
+                try stageShaderHelpers()
+                let verSuffix = runtimeVersion.map { " (\($0))" } ?? ""
                 log("")
                 log("Done! Updated NotRecall runtime\(verSuffix) only (Steam prefixes, shader caches, and plugin untouched).")
                 return NotRecallOperationResult(
@@ -389,7 +280,7 @@ enum NotRecallInstaller {
                 )
             }
 
-            try stageRecallHelpers()
+            try stageShaderHelpers()
 
             guard let resRoot = resourcesRoot else {
                 throw InstallerError(message: "Could not locate bundled NotRecall resources (compat/ and scripts/pipeline_hook.sh).")
@@ -406,12 +297,7 @@ enum NotRecallInstaller {
                 try copyReplacing(from: pipelineHookSrc, to: pipelineHookDst, permissions: 0o755)
             }
 
-            if let sysinfoBin = findHelperBinary(
-                named: "notrecall-sysinfo",
-                recallHelpersDir: nil,
-                resourcesRoot: resRoot,
-                home: home
-            ) {
+            if let sysinfoBin = findBundledHelper(named: "notrecall-sysinfo", resourcesRoot: resRoot) {
                 log("    Staging notrecall-sysinfo from: \(sysinfoBin.path)")
                 let dst = nrSupport.appending(path: "helpers/notrecall-sysinfo")
                 if options.dryRun {
@@ -421,7 +307,7 @@ enum NotRecallInstaller {
                 }
             }
 
-            // 6. Install Steam compatibility tool bundle, NotProton adoption metadata, and plugin.
+            // 5. Install Steam compatibility tool bundle, NotProton adoption metadata, and plugin.
             log("==> Installing Steam compatibility tool to: \(toolDst.path)")
             let compatFiles: [(String, Int?)] = [
                 ("compatibilitytool.vdf", nil),
@@ -464,7 +350,7 @@ enum NotRecallInstaller {
                 }
             }
 
-            let verSentence = recallAppVersion.map { " Installed Recall \($0) runtime." } ?? ""
+            let verSentence = runtimeVersion.map { " Installed bundled runtime \($0)." } ?? ""
             log("")
             log("Done!\(verSentence) Restart Steam, then select 'NotRecall (Recall Wine + DXMT)' under:")
             log("  Game -> Properties -> Compatibility -> Force the use of a specific Steam Play compatibility tool")
@@ -475,7 +361,7 @@ enum NotRecallInstaller {
                 log: logLines.joined(separator: "\n"),
                 summary: options.dryRun
                     ? "Dry run completed — see Logs."
-                    : (recallAppVersion.map { "Installed NotRecall (Recall \($0))." } ?? "Installed NotRecall.")
+                    : (runtimeVersion.map { "Installed NotRecall (\($0))." } ?? "Installed NotRecall.")
             )
         } catch {
             log("Error: \(error.localizedDescription)")
@@ -524,7 +410,7 @@ enum NotRecallInstaller {
             }
 
             if entryExists(at: nrCache) {
-                log("==> Removing downloaded Recall cache: \(nrCache.path)")
+                log("==> Removing NotRecall cache: \(nrCache.path)")
                 try fm.removeItem(at: nrCache)
             }
 
@@ -546,7 +432,7 @@ enum NotRecallInstaller {
 
     // MARK: - Helpers
 
-    private static func locateResourcesRoot() -> URL? {
+    static func locateResourcesRoot() -> URL? {
         let fm = FileManager.default
         if let resDir = Bundle.main.resourceURL,
            fm.fileExists(atPath: resDir.appending(path: "compat/run").path) {
@@ -569,68 +455,17 @@ enum NotRecallInstaller {
         return nil
     }
 
-    private static func findRecallRuntime(home: URL) -> URL? {
+    private static func findBundledHelper(named binName: String, resourcesRoot: URL?) -> URL? {
+        guard let resourcesRoot else { return nil }
         let fm = FileManager.default
-        let appCandidates = [
-            URL(filePath: "/Applications/Recall.app"),
-            home.appending(path: "Applications/Recall.app")
+        let searchDirs = [
+            resourcesRoot.appending(path: "helpers"),
+            resourcesRoot.appending(path: "build/helpers")
         ]
-        if let hit = appCandidates.first(where: {
-            fm.fileExists(atPath: $0.appending(path: "Contents/Resources/runtime.tar.gz").path) ||
-            fm.isExecutableFile(atPath: $0.appending(path: "Contents/Resources/runtime/bin/wine").path)
-        }) {
-            return hit
-        }
-
-        let owRoot = home.appending(path: "Library/Application Support/Overwatch2Mac")
-        let runtimesDir = owRoot.appending(path: "runtimes")
-        if let versions = try? fm.contentsOfDirectory(at: runtimesDir, includingPropertiesForKeys: [.contentModificationDateKey]) {
-            let sorted = versions.sorted {
-                let d0 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                let d1 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                return d0 > d1
-            }
-            if let hit = sorted.first(where: {
-                fm.isExecutableFile(atPath: $0.appending(path: "bin/wine").path) &&
-                isDirectory($0.appending(path: "lib/wine/x86_64-unix"))
-            }) {
-                return hit
-            }
-        }
-
-        for rel in ["runtime/current", "runtime"] {
-            let candidate = owRoot.appending(path: rel)
-            if fm.isExecutableFile(atPath: candidate.appending(path: "bin/wine").path) &&
-                isDirectory(candidate.appending(path: "lib/wine/x86_64-unix")) {
-                return candidate
-            }
-        }
-        return nil
-    }
-
-    private static func findHelperBinary(
-        named binName: String,
-        recallHelpersDir: URL?,
-        resourcesRoot: URL?,
-        home: URL
-    ) -> URL? {
-        let fm = FileManager.default
-        var searchDirs: [URL] = []
-        if binName == "notrecall-sysinfo" {
-            if let resourcesRoot {
-                searchDirs.append(resourcesRoot.appending(path: "helpers"))
-                searchDirs.append(resourcesRoot.appending(path: "build/helpers"))
-            }
-        } else {
-            if let recallHelpersDir { searchDirs.append(recallHelpersDir) }
-            searchDirs.append(URL(filePath: "/Applications/Recall.app/Contents/Helpers"))
-            searchDirs.append(home.appending(path: "Applications/Recall.app/Contents/Helpers"))
-        }
-
         for dir in searchDirs {
-            let direct = dir.appending(path: binName)
-            if fm.isExecutableFile(atPath: direct.path) {
-                return direct
+            let candidate = dir.appending(path: binName)
+            if fm.fileExists(atPath: candidate.path) {
+                return candidate
             }
         }
         return nil
@@ -655,7 +490,6 @@ enum NotRecallInstaller {
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
     }
 
-    /// Returns true for existing files, directories, and even broken symlinks.
     private static func entryExists(at url: URL) -> Bool {
         if FileManager.default.fileExists(atPath: url.path) { return true }
         return (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil
