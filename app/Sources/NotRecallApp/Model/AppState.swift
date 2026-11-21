@@ -723,16 +723,20 @@ final class AppState: ObservableObject {
         }
         let recallOWApp = notRecallSupport.appending(path: "runtime/lib/wine/game-mode/Overwatch.app")
         let wrapperApp = notRecallSupport.appending(path: "launchers/\(entry.appID)/NotRecallGame.app")
+        let unixWine = notRecallSupport.appending(path: "runtime/lib/wine/x86_64-unix/wine")
         let gameApp: URL
-        if entry.appID == "2357570", FileManager.default.fileExists(atPath: recallOWApp.appending(path: "Contents/MacOS/wine").path) {
+        if entry.appID == "2357570", FileManager.default.isExecutableFile(atPath: recallOWApp.appending(path: "Contents/MacOS/wine").path) {
             gameApp = recallOWApp
-        } else {
+        } else if FileManager.default.fileExists(atPath: wrapperApp.path) {
             gameApp = wrapperApp
+        } else {
+            gameApp = unixWine
         }
         let logFile = entry.path.deletingLastPathComponent().appending(path: "notrecall-run.log")
+        let gameAppArg = FileManager.default.fileExists(atPath: gameApp.path) ? gameApp.path : ""
         let args: [String] = [
             hook.path, "post", entry.path.path,
-            FileManager.default.fileExists(atPath: gameApp.path) ? gameApp.path : "",
+            gameAppArg,
             logFile.path
         ]
         let ok = await Task.detached { () -> Bool in

@@ -505,10 +505,31 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   export WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
   mkdir -p "$WINEPREFIX"
   lay_out_proton_profile
+  wineinf_file="$nr_runtime/share/wine/wine.inf"
+  wineinf_stamp="$STEAM_COMPAT_DATA_PATH/.notrecall-wineinf.sha"
+  wineinf_sha=""
+  if [ -f "$wineinf_file" ]; then
+    wineinf_sha=$(/usr/bin/shasum -a 256 < "$wineinf_file" 2>/dev/null | cut -d' ' -f1 || true)
+  fi
+
   if [ ! -f "$WINEPREFIX/system.reg" ]; then
     echo "=== initializing new prefix at $WINEPREFIX ===" >> "$log" 2>&1 || true
-    without_lock_fds "$WINELOADER" wineboot --init >> "$log" 2>&1 || true
-    without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
+    if without_lock_fds "$WINELOADER" wineboot --init >> "$log" 2>&1; then
+      without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
+      if [ -n "$wineinf_sha" ]; then
+        printf '%s\n' "$wineinf_sha" > "$wineinf_stamp.tmp.$$" 2>/dev/null && \
+          mv -f "$wineinf_stamp.tmp.$$" "$wineinf_stamp" 2>/dev/null || rm -f "$wineinf_stamp.tmp.$$" 2>/dev/null || true
+      fi
+    else
+      without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
+    fi
+  elif [ -n "$wineinf_sha" ] && [ "$(cat "$wineinf_stamp" 2>/dev/null || true)" != "$wineinf_sha" ]; then
+    echo "=== runtime wine.inf changed; updating prefix at $WINEPREFIX ===" >> "$log" 2>&1 || true
+    if without_lock_fds "$WINELOADER" wineboot -u >> "$log" 2>&1; then
+      without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
+      printf '%s\n' "$wineinf_sha" > "$wineinf_stamp.tmp.$$" 2>/dev/null && \
+        mv -f "$wineinf_stamp.tmp.$$" "$wineinf_stamp" 2>/dev/null || rm -f "$wineinf_stamp.tmp.$$" 2>/dev/null || true
+    fi
   fi
   map_game_drive
   import_prefix_settings
@@ -1139,7 +1160,7 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   export DXMT_SHADER_CACHE_PATH="${DXMT_SHADER_CACHE_PATH:-$cache_root/cache/shaders}"
   export DXMT_GPU_REPORT="${DXMT_GPU_REPORT:-$STEAM_COMPAT_DATA_PATH/gpu-reports}"
   export DXMT_PIPELINE_CACHE_NAMESPACE="${NOTRECALL_PIPELINE_NAMESPACE:-ow2-source-v1}"
-  mkdir -p "$DXMT_PIPELINE_CACHE_PATH" "$DXMT_SHADER_CACHE_PATH" "$DXMT_GPU_REPORT"
+  mkdir -p "$DXMT_PIPELINE_CACHE_PATH" "$DXMT_SHADER_CACHE_PATH" "$DXMT_GPU_REPORT" "$cache_root/home"
   # Honor per-game Rebuild Shaders marker (NotRecall.app) or env toggle (Steam Compatibility UI).
   if [ -f "$cache_root/cache/rebuild-shaders" ] || [ "${NOTRECALL_REBUILD_SHADERS:-0}" = "1" ]; then
     echo "=== rebuild-shaders requested; clearing compiled shader archives and metadata ===" >> "$log" 2>&1 || true
@@ -1367,9 +1388,20 @@ fi
 if [ "$prefix_locked" -eq 1 ]; then exec 8>&-; prefix_locked=0; fi
 
 # 8. Pre-launch shader pipeline consolidate & warm.
+# When Game Mode is off, pass lib/wine/x86_64-unix/wine (which embeds CrossOver's
+# CFBundleIdentifier Info.plist) rather than bin/wine so pipeline-warm resolves
+# the exact Metal shader cache directory the game actually uses.
+pipeline_program="$game_app"
+if [ -z "$pipeline_program" ]; then
+  if [ -n "${wine_unix:-}" ] && [ -f "$wine_unix/wine" ] && [ -x "$wine_unix/wine" ]; then
+    pipeline_program="$wine_unix/wine"
+  else
+    pipeline_program="$launch_wine"
+  fi
+fi
 pipeline_hook="$nr_helpers/pipeline_hook.sh"
 if [ -n "$cache_root" ] && [ -x "$pipeline_hook" ]; then
-  "$pipeline_hook" pre "$cache_root" "${game_app:-$launch_wine}" "$log" || true
+  "$pipeline_hook" pre "$cache_root" "$pipeline_program" "$log" || true
 fi
 
 # 9. Wire Steam Overlay shim and launch game through steam.exe shim.
@@ -1419,7 +1451,7 @@ fi
 
 # 10. Kick off detached post-session shader precompilation.
 if [ -n "$cache_root" ] && [ -x "$pipeline_hook" ]; then
-  "$pipeline_hook" post "$cache_root" "${game_app:-$launch_wine}" "$log" || true
+  "$pipeline_hook" post "$cache_root" "$pipeline_program" "$log" || true
 fi
 
 exit "$status"

@@ -130,6 +130,274 @@ def build_helpers(recall_dir: Path, work: Path, helpers_out: Path, identity: str
     print('    OK: ow2-pipeline, libpipeline_prepare.dylib, pipeline-prepare, pipeline-warm', flush=True)
 
 
+WINEMACMF_PE_SOURCES = ('aac_encoder', 'h264_encoder', 'main', 'mpeg4_sink')
+WINEMACMF_UNIX_SOURCES = ('unixlib.c', 'macmf_cocoa.m')
+WINEMACMF_FRAMEWORKS = (
+    'AVFoundation', 'AudioToolbox', 'CoreMedia', 'CoreVideo',
+    'VideoToolbox', 'Foundation', 'CoreFoundation',
+)
+
+
+def _make_var(makefile: str, name: str) -> str:
+    match = re.search(r'^' + re.escape(name) + r' = (.*)$', makefile, re.M)
+    if not match:
+        raise RuntimeError(f'Phase 2 Makefile lacks {name}')
+    return match.group(1)
+
+
+def _make_recipe(makefile: str, target: str) -> str:
+    match = re.search(
+        r'^' + re.escape(target) + r':[^\n]*(?:\\\n[^\n]*)*\n\t((?:[^\n]*\\\n)*[^\n]*)',
+        makefile, re.M,
+    )
+    if not match:
+        raise RuntimeError(f'Phase 2 Makefile lacks a rule for {target}')
+    return match.group(1).replace('\\\n', ' ')
+
+
+def _make_expand(command: str, output: Path, makefile: str, ldflags: str) -> str:
+    command = (command
+               .replace('$(CC)', _make_var(makefile, 'CC'))
+               .replace('$(CFLAGS)', _make_var(makefile, 'CFLAGS'))
+               .replace('$(LDFLAGS)', ldflags)
+               .replace('$@', str(output)))
+    if '$(' in command:
+        raise RuntimeError(f'Unexpanded make variable in: {command}')
+    return command
+
+
+def _make_expand_braces(command: str, makefile: str) -> str:
+    def _val(match):
+        return _make_var(makefile, match.group(1))
+    for _ in range(10):
+        expanded = re.sub(r'\$\{(\w+)\}', _val, command)
+        if expanded == command:
+            return command
+        command = expanded
+    raise RuntimeError(f'Make variables nest too deeply in: {command}')
+
+
+def _make_expand_cross(command: str, makefile: str, cross_cflags: str) -> str:
+    def _val(match):
+        if match.group(1) in ('x86_64_CFLAGS', 'i386_CFLAGS'):
+            return cross_cflags
+        return _make_var(makefile, match.group(1))
+    return re.sub(r'\$\(((?:x86_64|i386)_\w+)\)', _val, command)
+
+
+RECALL_WINE_OVERLAY_PATCHES = (
+    'patches/wine-server-registry-save.patch',
+    'patches/wine-ntdll-syscall-log.patch',
+    'patches/wine-win32u-display-log.patch',
+    'patches/wine-winemac-activation.patch',
+    'patches/wine-audio-devices.patch',
+    'patches/wine-service-security.patch',
+    'patches/wine-media-foundation.patch',
+)
+
+RECALL_WINE_COMPONENTS = (
+    ('server', 'server/wineserver', 'bin/wineserver'),
+    ('dlls/ntdll', 'dlls/ntdll/ntdll.so', 'lib/wine/x86_64-unix/ntdll.so'),
+    ('dlls/win32u', 'dlls/win32u/win32u.so', 'lib/wine/x86_64-unix/win32u.so'),
+    ('dlls/winemac.drv', 'dlls/winemac.drv/winemac.so', 'lib/wine/x86_64-unix/winemac.so'),
+    ('dlls/mmdevapi', 'dlls/mmdevapi/x86_64-windows/mmdevapi.dll', 'lib/wine/x86_64-windows/mmdevapi.dll'),
+    ('dlls/winecoreaudio.drv', 'dlls/winecoreaudio.drv/winecoreaudio.so', 'lib/wine/x86_64-unix/winecoreaudio.so'),
+    ('programs/services', 'programs/services/x86_64-windows/services.exe', 'lib/wine/x86_64-windows/services.exe'),
+    ('dlls/sechost', 'dlls/sechost/x86_64-windows/sechost.dll', 'lib/wine/x86_64-windows/sechost.dll'),
+    ('dlls/sechost', 'dlls/sechost/i386-windows/sechost.dll', 'lib/wine/i386-windows/sechost.dll'),
+    ('dlls/mfreadwrite', 'dlls/mfreadwrite/x86_64-windows/mfreadwrite.dll', 'lib/wine/x86_64-windows/mfreadwrite.dll'),
+    ('dlls/mfh264enc', 'dlls/mfh264enc/x86_64-windows/mfh264enc.dll', 'lib/wine/x86_64-windows/mfh264enc.dll'),
+)
+
+RECALL_WINE_SRC_DIRS = (
+    'server',
+    'dlls/ntdll',
+    'dlls/win32u',
+    'dlls/winemac.drv',
+    'dlls/mmdevapi',
+    'dlls/winecoreaudio.drv',
+    'programs/services',
+    'dlls/sechost',
+    'dlls/mfreadwrite',
+    'dlls/mfh264enc',
+)
+
+
+def wine_patches_digest(recall_dir: Path) -> str:
+    h = hashlib.sha256()
+    for rel in RECALL_WINE_OVERLAY_PATCHES:
+        p = recall_dir / rel
+        if not p.is_file():
+            raise SystemExit(f'Missing Recall Wine patch: {p}')
+        h.update(rel.encode())
+        h.update(b'\0')
+        h.update(p.read_bytes())
+    return h.hexdigest()
+
+
+def build_recall_wine_overlays(recall_dir: Path, work: Path, stage: Path, runtime_out: Path):
+    """Compile all Recall native Wine overlays (wineserver, ntdll.so with WINE_GAME_MODE +
+    msync fix, win32u.so, winemac.so with HID raw input + focus/fullscreen fixes,
+    hotplug mmdevapi/winecoreaudio, services/sechost, and Media Foundation winemacmf)
+    against the Phase 2 Wine build tree and overlay them into stage."""
+    wine_build = work / 'wine-build'
+    wine_src = work / 'sources/wine/sources/wine'
+    for req in (wine_build / 'Makefile', wine_build / '.portable-cross-paths', wine_src / 'loader/wine.inf.in'):
+        if not req.exists():
+            raise SystemExit(f'Missing Wine overlay build input: {req}')
+    for d in RECALL_WINE_SRC_DIRS:
+        if not (wine_src / d).is_dir():
+            raise SystemExit(f'Missing Wine source directory: {wine_src / d}')
+
+    tools_dir = Path('/Library/Developer/CommandLineTools')
+    sdkroot = tools_dir / 'SDKs/MacOSX26.5.sdk'
+    if not sdkroot.is_dir():
+        sdkroot = Path(subprocess.check_output(['/usr/bin/xcrun', '--show-sdk-path'], text=True).strip())
+
+    env = dict(
+        os.environ,
+        MACOSX_DEPLOYMENT_TARGET=MINIMUM_MACOS,
+        DEVELOPER_DIR=str(tools_dir),
+        SDKROOT=str(sdkroot),
+        PATH=':'.join([
+            str(recall_dir / 'runtime/toolchains/bison/bin'),
+            str(recall_dir / 'runtime/toolchains/llvm-mingw-20251216-ucrt-macos-universal/bin'),
+            str(tools_dir / 'usr/bin'),
+            '/usr/bin', '/bin', '/usr/sbin', '/sbin',
+        ]),
+    )
+    ldflags = '-Wl,-headerpad,0x1000 -L' + str(work / 'deps/lib')
+    makefile = (wine_build / 'Makefile').read_text()
+    cross_cflags = (wine_build / '.portable-cross-paths').read_text().strip()
+
+    overlay_work = runtime_out / '.wine-overlays-build'
+    if overlay_work.exists():
+        shutil.rmtree(overlay_work)
+    src_copy = overlay_work / 'src'
+    out_dir = overlay_work / 'out'
+    out_dir.mkdir(parents=True)
+
+    print('==> Building Recall native Wine overlays (ntdll, winemac, wineserver, win32u, audio, services, winemacmf)', flush=True)
+    try:
+        for d in RECALL_WINE_SRC_DIRS:
+            shutil.copytree(wine_src / d, src_copy / d)
+        (src_copy / 'loader').mkdir(parents=True)
+        shutil.copy2(wine_src / 'loader/wine.inf.in', src_copy / 'loader/wine.inf.in')
+        for rel in RECALL_WINE_OVERLAY_PATCHES:
+            run('/usr/bin/patch', '-p1', '-s', '-i', recall_dir / rel, cwd=src_copy)
+
+        prefix_map = f' -ffile-prefix-map={src_copy}=/build/overwatch-2-mac/sources/wine/sources/wine'
+
+        def _shell(command: str, label: str):
+            res = subprocess.run(command, shell=True, cwd=wine_build, env=env, capture_output=True, text=True)
+            if res.returncode:
+                raise RuntimeError(f'Wine overlay build failed ({label}):\n{res.stderr}')
+
+        def _retarget(command: str, template: str, directory: str) -> str:
+            command = command.replace(str(wine_src / template) + '/', str(src_copy / directory) + '/')
+            command = command.replace('-I' + str(wine_src / template) + ' ', '-I' + str(src_copy / directory) + ' ')
+            return command.replace('-I' + template + ' ', '-I' + directory + ' ')
+
+        # 1. Build all patched existing Wine components.
+        for directory, rule, dest_rel in RECALL_WINE_COMPONENTS:
+            comp_tag = rule.replace('/', '_')
+            comp_obj = out_dir / comp_tag / 'obj'
+            deps = re.search(r'^' + re.escape(rule) + r':((?:[^\n]*\\\n)*[^\n]*)', makefile, re.M).group(1)
+            obj_names = re.findall(r'(\S+)\.o\b', deps)
+
+            def _compile_obj(name: str, _obj=comp_obj):
+                target = _obj / (name + '.o')
+                target.parent.mkdir(parents=True, exist_ok=True)
+                cmd = _make_expand_braces(
+                    _make_expand(_make_expand_cross(_make_recipe(makefile, name + '.o'), makefile, cross_cflags),
+                                 target, makefile, ldflags),
+                    makefile,
+                )
+                for d in RECALL_WINE_SRC_DIRS:
+                    cmd = cmd.replace(str(wine_src / d) + '/', str(src_copy / d) + '/')
+                    cmd = cmd.replace('-I' + str(wine_src / d) + ' ', '-I' + str(src_copy / d) + ' ')
+                _shell(cmd + prefix_map, name + '.o')
+
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                list(pool.map(_compile_obj, obj_names))
+
+            raw = out_dir / comp_tag / Path(rule).name
+            link = _make_expand(_make_expand_cross(_make_recipe(makefile, rule), makefile, cross_cflags),
+                                raw, makefile, ldflags)
+            for name in obj_names:
+                link = re.sub(re.escape(name) + r'\.o\b', str(comp_obj / (name + '.o')), link)
+            _shell(link, dest_rel)
+            copy_entry(raw, stage / dest_rel)
+
+        # 2. Synthesized winemacmf.dll (PE, from mfh264enc template).
+        pe_obj = out_dir / 'winemacmf-pe/obj'
+        pe_obj.mkdir(parents=True)
+        template = 'dlls/mfh264enc'
+        directory = 'dlls/winemacmf'
+        compile_rule = _make_recipe(makefile, template + '/x86_64-windows/mfh264enc.o')
+        pe_objs = []
+        for name in WINEMACMF_PE_SOURCES:
+            target = pe_obj / (name + '.o')
+            cmd = compile_rule.replace(str(wine_src / template / 'mfh264enc.c'), str(src_copy / directory / (name + '.c')))
+            cmd = _retarget(_make_expand(_make_expand_cross(cmd, makefile, cross_cflags), target, makefile, ldflags),
+                            template, directory)
+            cmd = cmd.replace('-I' + directory + ' ', '-I' + str(pe_obj) + ' ')
+            _shell(cmd + prefix_map, f'winemacmf/{name}.o')
+            pe_objs.append(str(target))
+        res_file = pe_obj / 'winemacmf_r.res'
+        res_cmd = _make_recipe(makefile, template + '/x86_64-windows/mfh264enc_r.res')
+        res_cmd = res_cmd.replace(str(wine_src / template / 'mfh264enc.idl'), str(src_copy / directory / 'winemacmf.idl'))
+        res_cmd = _retarget(_make_expand(res_cmd, res_file, makefile, ldflags), template, directory)
+        _shell(res_cmd, 'winemacmf_r.res')
+        winemacmf_dll = out_dir / 'winemacmf.dll'
+        dll_link = _make_expand(_make_expand_cross(_make_recipe(makefile, template + '/x86_64-windows/mfh264enc.dll'),
+                                                   makefile, cross_cflags),
+                                winemacmf_dll, makefile, ldflags)
+        dll_link = dll_link.replace(str(wine_src / template / 'mfh264enc.spec'), str(src_copy / directory / 'winemacmf.spec'))
+        dll_link = dll_link.replace(template + '/x86_64-windows/mfh264enc.o', ' '.join(pe_objs))
+        dll_link = dll_link.replace(template + '/x86_64-windows/mfh264enc_r.res', str(res_file))
+        _shell(dll_link, 'winemacmf.dll')
+        copy_entry(winemacmf_dll, stage / 'lib/wine/x86_64-windows/winemacmf.dll')
+
+        # 3. Synthesized winemacmf.so (Unix Mach-O, from winedmo + winemac.drv templates).
+        unix_obj = out_dir / 'winemacmf-unix/obj'
+        unix_obj.mkdir(parents=True)
+        unix_objs = []
+        for fname in WINEMACMF_UNIX_SOURCES:
+            stem, suffix = fname.rsplit('.', 1)
+            tmpl, sample = ('dlls/winemac.drv', 'cocoa_app') if suffix == 'm' else ('dlls/winedmo', 'unixlib')
+            target = unix_obj / (stem + '.o')
+            cmd = _make_recipe(makefile, f'{tmpl}/{sample}.o')
+            cmd = cmd.replace(str(wine_src / tmpl / f'{sample}.{suffix}'), str(src_copy / directory / fname))
+            cmd = _retarget(_make_expand(cmd, target, makefile, ldflags), tmpl, directory)
+            cmd = cmd.replace('-I' + directory + ' ', '-I' + str(unix_obj) + ' ')
+            if suffix == 'm':
+                cmd += ' -fobjc-arc'
+            _shell(cmd + prefix_map, f'winemacmf/{fname}')
+            unix_objs.append(str(target))
+        winemacmf_so = out_dir / 'winemacmf.so'
+        so_link = _make_expand(_make_recipe(makefile, 'dlls/winedmo/winedmo.so'), winemacmf_so, makefile, ldflags)
+        so_link = so_link.replace('@rpath/winedmo.so', '@rpath/winemacmf.so')
+        so_link = re.sub(r'dlls/winedmo/\w+\.o(?: dlls/winedmo/\w+\.o)*', ' '.join(unix_objs), so_link, count=1)
+        if 'dlls/winedmo/' in so_link:
+            raise RuntimeError(f'winedmo objects remain in winemacmf link: {so_link}')
+        so_link += ''.join(' -framework ' + fw for fw in WINEMACMF_FRAMEWORKS)
+        _shell(so_link, 'winemacmf.so')
+        copy_entry(winemacmf_so, stage / 'lib/wine/x86_64-unix/winemacmf.so')
+
+        # 4. Synthesized wine.inf (registers winemacmf.dll).
+        wine_inf = out_dir / 'wine.inf'
+        inf_cmd = _make_expand_braces(_make_recipe(makefile, 'loader/wine.inf'), makefile)
+        inf_cmd = inf_cmd.replace(str(wine_src / 'loader/wine.inf.in'), str(src_copy / 'loader/wine.inf.in'))
+        inf_cmd = inf_cmd.replace('>$@', '>' + str(wine_inf))
+        _shell(inf_cmd, 'wine.inf')
+        copy_entry(wine_inf, stage / 'share/wine/wine.inf')
+        print('    OK: wineserver, ntdll.so, win32u.so, winemac.so, mmdevapi.dll, winecoreaudio.so, services.exe, sechost.dll (x64/x86), mfreadwrite.dll, mfh264enc.dll, winemacmf.{dll,so}, wine.inf', flush=True)
+    finally:
+        if overlay_work.exists():
+            shutil.rmtree(overlay_work)
+
+
 def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, identity: str, force: bool):
     runtime_out = out_dir / 'runtime'
     archive_path = runtime_out / 'runtime.tar.gz'
@@ -141,11 +409,13 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
 
     dxmt_proof = json.loads((work / 'dxmt-build-proof.json').read_text())
     dxmt_base = dxmt_proof.get('base', '')
+    wine_patches_sha = wine_patches_digest(recall_dir)
 
     if not force and archive_path.is_file() and meta_path.is_file():
         existing = json.loads(meta_path.read_text())
         if (existing.get('version') == version and
                 existing.get('dxmtBase') == dxmt_base and
+                existing.get('winePatchesSHA256') == wine_patches_sha and
                 existing.get('runtimeSHA256') == sha256_file(archive_path)):
             print(f'==> Bundled runtime already up to date ({version}, dxmt {dxmt_base[:7]})', flush=True)
             return
@@ -184,6 +454,8 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
         if lic_src.is_file():
             copy_entry(lic_src, stage / 'licenses/apple' / lic_name)
 
+    # Build and overlay all Recall native Wine patches (including winemacmf).
+    build_recall_wine_overlays(recall_dir, work, stage, runtime_out)
     # Copy baseline DXMT config & key licenses.
     copy_entry(recall_dir / 'config/dxmt-source60-1200.conf', stage / 'config/dxmt.conf')
     for src, dst in [
@@ -299,6 +571,7 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
         'schema': 1,
         'version': version,
         'dxmtBase': dxmt_base,
+        'winePatchesSHA256': wine_patches_sha,
         'minimum_macos': MINIMUM_MACOS,
         'native_dependency_inputs': chosen,
     }
@@ -318,6 +591,7 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
     meta = {
         'version': version,
         'dxmtBase': dxmt_base,
+        'winePatchesSHA256': wine_patches_sha,
         'runtimeArchive': 'runtime.tar.gz',
         'runtimeSHA256': archive_sha,
         'archiveBytes': archive_path.stat().st_size,

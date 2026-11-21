@@ -45,6 +45,7 @@ mkdir -p "$fake_runtime/bin" "$fake_runtime/lib/wine/x86_64-unix" "$fake_runtime
 cat > "$fake_runtime/bin/wine" <<'STUB'
 #!/bin/sh
 if [ "${1:-}" = "wineboot" ]; then
+  [ -n "${TEST_WINEBOOT_LOG:-}" ] && printf '%s\n' "$*" >> "$TEST_WINEBOOT_LOG"
   mkdir -p "$WINEPREFIX"
   : > "$WINEPREFIX/system.reg"
   exit 0
@@ -474,5 +475,78 @@ grep -Fq "d3d11.metalfxSharpness=0.8" "$np_env"
 grep -Fq "d3d11.preferredMaxFrameRate=120" "$np_env"
 rm -f "$fake_home/Library/Application Support/notrecall/settings.env"
 echo "    OK: NotProton adopted plugin env translation and precedence"
+
+# Case 11: Existing prefix automatically runs wineboot -u when runtime wine.inf changes (e.g. winemacmf registration).
+wb_data="$test_root/compatdata/wb-ow"
+mkdir -p "$wb_data/pfx" "$fake_runtime/share/wine"
+: > "$wb_data/pfx/system.reg"
+printf 'winemacmf v1\n' > "$fake_runtime/share/wine/wine.inf"
+wb_log="$test_root/wineboot.log"
+wb_env="$test_root/wb.env"
+
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$wb_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_WINEBOOT_LOG="$wb_log" \
+  TEST_ENV_OUT="$wb_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+[ "$(wc -l < "$wb_log" | tr -d ' ')" = "1" ]
+grep -Fqx "wineboot -u" "$wb_log"
+
+# Second launch with unchanged wine.inf must not re-run wineboot.
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$wb_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_WINEBOOT_LOG="$wb_log" \
+  TEST_ENV_OUT="$wb_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+[ "$(wc -l < "$wb_log" | tr -d ' ')" = "1" ]
+rm -f "$fake_runtime/share/wine/wine.inf"
+echo "    OK: Existing prefix wineboot -u on runtime wine.inf update"
+
+# Case 12: pipeline_hook.sh receives lib/wine/x86_64-unix/wine when Game Mode is off, and Overwatch.app when on.
+mkdir -p "$fake_home/Library/Application Support/notrecall/helpers"
+cat > "$fake_runtime/lib/wine/x86_64-unix/wine" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+chmod 755 "$fake_runtime/lib/wine/x86_64-unix/wine"
+pipe_args_log="$test_root/pipe_args.log"
+cat > "$fake_home/Library/Application Support/notrecall/helpers/pipeline_hook.sh" <<'HOOK'
+#!/bin/sh
+[ -n "${TEST_PIPE_LOG:-}" ] && printf '%s|%s\n' "$1" "$3" >> "$TEST_PIPE_LOG"
+exit 0
+HOOK
+chmod 755 "$fake_home/Library/Application Support/notrecall/helpers/pipeline_hook.sh"
+
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$gm_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_PIPE_LOG="$pipe_args_log" \
+  TEST_ENV_OUT="$gm_off_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+grep -Fqx "pre|$fake_runtime/lib/wine/x86_64-unix/wine" "$pipe_args_log"
+grep -Fqx "post|$fake_runtime/lib/wine/x86_64-unix/wine" "$pipe_args_log"
+[ -d "$gm_data/notrecall-cache/home" ]
+
+: > "$pipe_args_log"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$gm_data" \
+  NOTRECALL_GAME_MODE=1 \
+  TEST_PIPE_LOG="$pipe_args_log" \
+  TEST_ENV_OUT="$gm_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+grep -Fqx "pre|$fake_runtime/lib/wine/game-mode/Overwatch.app" "$pipe_args_log"
+grep -Fqx "post|$fake_runtime/lib/wine/game-mode/Overwatch.app" "$pipe_args_log"
+rm -f "$fake_home/Library/Application Support/notrecall/helpers/pipeline_hook.sh"
+echo "    OK: pipeline-warm target selection (Overwatch.app vs lib/wine/x86_64-unix/wine) and cache_root/home"
 
 echo "==> All checks passed!"
