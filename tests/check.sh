@@ -594,4 +594,19 @@ grep -Fq 'FullScreenWidth = "2560"' "$mfx_ini"
 grep -Fq 'FullScreenHeight = "1600"' "$mfx_ini"
 echo "    OK: MetalFX Settings_v0.ini rewrite keeps notrecall-display.state GPU in sync"
 
+# Case 14: User dxmt.conf ending in another [OtherGame.exe] section resets back to [Overwatch.exe]
+# so DXMT_CONFIG env vars (frame pacing, FPS limit, MetalFX sharpness) remain active.
+dxmt_sec_data="$test_root/compatdata/dxmt-sec"
+mkdir -p "$dxmt_sec_data"
+printf '[OtherGame.exe]\nd3d11.preferredMaxFrameRate = 60\n' > "$dxmt_sec_data/dxmt.conf"
+HOME="$fake_home" \
+  STEAM_COMPAT_APP_ID=2357570 \
+  STEAM_COMPAT_DATA_PATH="$dxmt_sec_data" \
+  NOTRECALL_GAME_MODE=0 \
+  TEST_ENV_OUT="$ow_env" \
+  sh "$PROJECT_DIR/compat/run" waitforexitandrun "C:\\Games\\Overwatch\\Overwatch.exe"
+
+[ "$(tail -n 1 "$dxmt_sec_data/notrecall-dxmt.conf")" = "[Overwatch.exe]" ]
+echo "    OK: Managed notrecall-dxmt.conf resets section to [Overwatch.exe] after user overrides"
+
 echo "==> All checks passed!"

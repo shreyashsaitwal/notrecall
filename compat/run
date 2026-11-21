@@ -906,7 +906,9 @@ if [ "$verb" = "waitforexitandrun" ] && [ -z "${DXMT_CONFIG_FILE:-}" ] && [ -n "
       if [ -f "$STEAM_COMPAT_DATA_PATH/dxmt.conf" ]; then
         printf '\n# User overrides from %s\n[Overwatch.exe]\n' "$STEAM_COMPAT_DATA_PATH/dxmt.conf"
         cat "$STEAM_COMPAT_DATA_PATH/dxmt.conf"
-        printf '\n'
+        # Reset section back to [Overwatch.exe] so DXMT_CONFIG env vars stay active
+        # even if the user's dxmt.conf ended in another [Exe.exe] section.
+        printf '\n[Overwatch.exe]\n'
       fi
     } > "$tmp_dxmt_conf" 2>/dev/null && mv -f "$tmp_dxmt_conf" "$managed_dxmt_conf" 2>/dev/null || rm -f "$tmp_dxmt_conf"
     if [ -f "$managed_dxmt_conf" ]; then
