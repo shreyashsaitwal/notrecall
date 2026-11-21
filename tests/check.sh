@@ -25,16 +25,16 @@ grep -q '"to_oslist" "macos"' "$PROJECT_DIR/compat/compatibilitytool.vdf"
 grep -q '"commandline" "/run %verb%"' "$PROJECT_DIR/compat/toolmanifest.vdf"
 echo "    OK: compatibilitytool.vdf & toolmanifest.vdf"
 
-echo "==> Checking NotProton plugin descriptor (50-notrecall.conf)"
-[ -f "$PROJECT_DIR/plugins/50-notrecall.conf" ]
-first_sec=$(grep -E '^\[NOTPROTON_' "$PROJECT_DIR/plugins/50-notrecall.conf" | head -1)
+echo "==> Checking NotProton plugin descriptor (notrecall.conf)"
+[ -f "$PROJECT_DIR/plugins/notrecall.conf" ]
+first_sec=$(grep -E '^\[NOTPROTON_' "$PROJECT_DIR/plugins/notrecall.conf" | head -1)
 [ "$first_sec" = "[NOTPROTON_NOTRECALL]" ]
-grep -Fq "label       = NotRecall" "$PROJECT_DIR/plugins/50-notrecall.conf"
-grep -Fq "hide_crossover = 1" "$PROJECT_DIR/plugins/50-notrecall.conf"
-grep -Fq "tools          = notrecall-proton*" "$PROJECT_DIR/plugins/50-notrecall.conf"
-! grep -Fq "NOTPROTON_NOTRECALL_REBUILD_SHADERS" "$PROJECT_DIR/plugins/50-notrecall.conf"
-! grep -Fq "NOTPROTON_NOTRECALL_RESET_DISPLAY" "$PROJECT_DIR/plugins/50-notrecall.conf"
-echo "    OK: plugins/50-notrecall.conf has [NOTPROTON_NOTRECALL] metadata header and hide_crossover = 1"
+grep -Fq "label       = NotRecall" "$PROJECT_DIR/plugins/notrecall.conf"
+grep -Fq "hide_crossover = 1" "$PROJECT_DIR/plugins/notrecall.conf"
+grep -Fq "tools          = notrecall-proton*" "$PROJECT_DIR/plugins/notrecall.conf"
+! grep -Fq "NOTPROTON_NOTRECALL_REBUILD_SHADERS" "$PROJECT_DIR/plugins/notrecall.conf"
+! grep -Fq "NOTPROTON_NOTRECALL_RESET_DISPLAY" "$PROJECT_DIR/plugins/notrecall.conf"
+echo "    OK: plugins/notrecall.conf has [NOTPROTON_NOTRECALL] metadata header and hide_crossover = 1"
 
 echo "==> Running behavioral tests for compat/run (Overwatch defaults & env contract)"
 test_root=$(mktemp -d)

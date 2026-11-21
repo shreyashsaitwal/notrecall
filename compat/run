@@ -123,7 +123,7 @@ sync_notproton_adoption() {
 }
 sync_notproton_adoption
 
-# Translate Steam Compatibility UI plugin vars (set by NotProton's 50-notrecall.conf
+# Translate Steam Compatibility UI plugin vars (set by NotProton's notrecall.conf
 # when notrecall-proton is adopted) without clobbering explicit raw env overrides.
 load_notproton_plugin_env() {
   [ "${NOTPROTON_NOTRECALL_METALFX:-}" = "1" ]           && [ -z "${DXMT_ENABLE_NVEXT+1}" ]          && export DXMT_ENABLE_NVEXT=1

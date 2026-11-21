@@ -15,7 +15,7 @@ NP_SUPPORT="${NOTPROTON_SUPPORT:-$HOME/Library/Application Support/notproton}"
 NR_SUPPORT="$HOME/Library/Application Support/notrecall"
 STEAM_COMPAT_DIR="$HOME/Library/Application Support/Steam/compatibilitytools.d"
 TOOL_DST="$STEAM_COMPAT_DIR/notrecall-proton"
-PLUGIN_DST="$NP_SUPPORT/plugins/50-notrecall.conf"
+PLUGIN_DST="$NP_SUPPORT/plugins/notrecall.conf"
 DRY_RUN=0
 RUNTIME_ONLY=0
 FORCE_PATCH_NTDLL=0
@@ -468,10 +468,10 @@ else
   echo "    Note: $NP_SUPPORT/tools not found yet; compat/run will sync adoption metadata once NotProton is installed."
 fi
 
-if [ -f "$PROJECT_DIR/plugins/50-notrecall.conf" ]; then
+if [ -f "$PROJECT_DIR/plugins/notrecall.conf" ]; then
   echo "==> Installing NotProton Steam Compatibility plugin to: $PLUGIN_DST"
   run_cmd mkdir -p "$NP_SUPPORT/plugins"
-  run_cmd cp -f "$PROJECT_DIR/plugins/50-notrecall.conf" "$PLUGIN_DST"
+  run_cmd cp -f "$PROJECT_DIR/plugins/notrecall.conf" "$PLUGIN_DST"
 fi
 
 echo ""

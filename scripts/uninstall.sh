@@ -8,7 +8,7 @@ NP_SUPPORT="${NOTPROTON_SUPPORT:-$HOME/Library/Application Support/notproton}"
 NR_SUPPORT="$HOME/Library/Application Support/notrecall"
 NR_CACHE="$HOME/Library/Caches/notrecall"
 TOOL_DST="$HOME/Library/Application Support/Steam/compatibilitytools.d/notrecall-proton"
-LEGACY_PLUGIN_DST="$NP_SUPPORT/plugins/50-notrecall.conf"
+LEGACY_PLUGIN_DST="$NP_SUPPORT/plugins/notrecall.conf"
 
 echo "==> Removing Steam compatibility tool: $TOOL_DST"
 rm -rf "$TOOL_DST"

@@ -87,8 +87,8 @@ cp -f "$PROJECT_DIR/compat/toolmanifest.vdf"      "$RES_DIR/compat/"
 cp -f "$PROJECT_DIR/compat/run"                   "$RES_DIR/compat/"
 chmod 755 "$RES_DIR/compat/run"
 
-if [ -f "$PROJECT_DIR/plugins/50-notrecall.conf" ]; then
-  cp -f "$PROJECT_DIR/plugins/50-notrecall.conf" "$RES_DIR/plugins/50-notrecall.conf"
+if [ -f "$PROJECT_DIR/plugins/notrecall.conf" ]; then
+  cp -f "$PROJECT_DIR/plugins/notrecall.conf" "$RES_DIR/plugins/notrecall.conf"
 fi
 
 for s in install.sh uninstall.sh pipeline_hook.sh; do
