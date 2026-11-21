@@ -71,10 +71,12 @@ final class AppState: ObservableObject {
     @Published var bundledRuntimeURL: URL?
     @Published var bundledRuntimeVersion: String?
     @Published var bundledDXMTBase: String?
+    @Published var bundledWinePatchesSHA: String?
     @Published var customRuntimeURL: URL?
     @Published var stagedRuntimeReady = false
     @Published var stagedRuntimeVersion: String?
     @Published var stagedDXMTBase: String?
+    @Published var stagedWinePatchesSHA: String?
     @Published var selectedSection: SidebarSection = .overview
     @Published var confirmForceQuit = false
     @Published var confirmResetDisplay = false
@@ -122,6 +124,9 @@ final class AppState: ObservableObject {
             return true
         }
         if let bDxmt = bundledDXMTBase, !bDxmt.isEmpty, let sDxmt = stagedDXMTBase, sDxmt != bDxmt {
+            return true
+        }
+        if let bPatches = bundledWinePatchesSHA, !bPatches.isEmpty, stagedWinePatchesSHA != bPatches {
             return true
         }
         return false
@@ -207,9 +212,11 @@ final class AppState: ObservableObject {
         let bundledRuntimeURL: URL?
         let bundledRuntimeVersion: String?
         let bundledDXMTBase: String?
+        let bundledWinePatchesSHA: String?
         let stagedRuntimeReady: Bool
         let stagedRuntimeVersion: String?
         let stagedDXMTBase: String?
+        let stagedWinePatchesSHA: String?
         let steamToolInstalled: Bool
         let helpersInstalled: Bool
         let steamLibraryCount: Int
@@ -241,7 +248,7 @@ final class AppState: ObservableObject {
             let bridgeReady = fm.fileExists(atPath: npSupport.appending(path: "bridge").path)
             let bundled = NotRecallInstaller.locateBundledRuntime()
             let runtimeReady = fm.isExecutableFile(atPath: nrSupport.appending(path: "runtime/bin/wine").path)
-            let (runtimeVer, dxmtBase) = Self.readRuntimeInfo(in: nrSupport.appending(path: "runtime"))
+            let (runtimeVer, dxmtBase, winePatchesSHA) = Self.readRuntimeInfo(in: nrSupport.appending(path: "runtime"))
             let toolInstalled = fm.isExecutableFile(atPath: compatTool.appending(path: "run").path)
             let helpersReady = fm.isExecutableFile(atPath: nrSupport.appending(path: "helpers/ow2-pipeline").path)
 
@@ -260,9 +267,11 @@ final class AppState: ObservableObject {
                 bundledRuntimeURL: bundled?.archiveURL,
                 bundledRuntimeVersion: bundled?.version,
                 bundledDXMTBase: bundled?.dxmtBase,
+                bundledWinePatchesSHA: bundled?.winePatchesSHA256,
                 stagedRuntimeReady: runtimeReady,
                 stagedRuntimeVersion: runtimeVer,
                 stagedDXMTBase: dxmtBase,
+                stagedWinePatchesSHA: winePatchesSHA,
                 steamToolInstalled: toolInstalled,
                 helpersInstalled: helpersReady,
                 steamLibraryCount: libraries.count,
@@ -282,9 +291,11 @@ final class AppState: ObservableObject {
         bundledRuntimeURL = snapshot.bundledRuntimeURL
         bundledRuntimeVersion = snapshot.bundledRuntimeVersion
         bundledDXMTBase = snapshot.bundledDXMTBase
+        bundledWinePatchesSHA = snapshot.bundledWinePatchesSHA
         stagedRuntimeReady = snapshot.stagedRuntimeReady
         stagedRuntimeVersion = snapshot.stagedRuntimeVersion
         stagedDXMTBase = snapshot.stagedDXMTBase
+        stagedWinePatchesSHA = snapshot.stagedWinePatchesSHA
         steamToolInstalled = snapshot.steamToolInstalled
         helpersInstalled = snapshot.helpersInstalled
         steamLibraryCount = snapshot.steamLibraryCount
@@ -927,13 +938,17 @@ final class AppState: ObservableObject {
         return candidates.first { fm.fileExists(atPath: $0.path) }
     }
 
-    nonisolated private static func readRuntimeInfo(in runtimeDir: URL) -> (String?, String?) {
+    nonisolated private static func readRuntimeInfo(in runtimeDir: URL) -> (String?, String?, String?) {
         let manifest = runtimeDir.appending(path: "runtime.json")
         guard let data = try? Data(contentsOf: manifest),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return (nil, nil)
+            return (nil, nil, nil)
         }
-        return (json["version"] as? String, json["dxmtBase"] as? String)
+        return (
+            json["version"] as? String,
+            json["dxmtBase"] as? String,
+            json["winePatchesSHA256"] as? String
+        )
     }
 
     nonisolated private static func discoverSteamLibraries(home: URL) -> [URL] {

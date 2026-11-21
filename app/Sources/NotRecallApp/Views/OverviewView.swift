@@ -267,7 +267,9 @@ struct MetricsBentoRow: View {
                 label: "Bundled Runtime",
                 value: stagedRuntimeVersion ?? (stagedRuntimeReady ? "Staged" : "Not Installed"),
                 caption: bundledRuntimeUpdateAvailable
-                    ? "New bundled build ready (\(bundledRuntimeVersion ?? "update"))"
+                    ? ((bundledRuntimeVersion != nil && bundledRuntimeVersion != stagedRuntimeVersion)
+                        ? "New bundled build ready (\(bundledRuntimeVersion!))"
+                        : "Updated Wine + DXMT build ready")
                     : (stagedRuntimeReady ? "Matches bundled Wine + DXMT" : "Ready to install offline"),
                 symbol: bundledRuntimeUpdateAvailable ? "arrow.triangle.2.circlepath.circle.fill" : "shippingbox.fill",
                 tint: bundledRuntimeUpdateAvailable ? NotRecallTheme.brand : (stagedRuntimeReady ? NotRecallTheme.healthy : NotRecallTheme.warning),

@@ -17,6 +17,7 @@ struct BundledRuntimeInfo: Sendable {
     let archiveURL: URL
     let version: String?
     let dxmtBase: String?
+    let winePatchesSHA256: String?
     let sha256: String?
 }
 
@@ -36,14 +37,22 @@ enum NotRecallInstaller {
         for (archiveURL, metaURL) in candidates where fm.fileExists(atPath: archiveURL.path) {
             var version: String?
             var dxmtBase: String?
+            var winePatchesSHA256: String?
             var sha: String?
             if let data = try? Data(contentsOf: metaURL),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 version = json["version"] as? String
                 dxmtBase = json["dxmtBase"] as? String
+                winePatchesSHA256 = json["winePatchesSHA256"] as? String
                 sha = json["runtimeSHA256"] as? String
             }
-            return BundledRuntimeInfo(archiveURL: archiveURL, version: version, dxmtBase: dxmtBase, sha256: sha)
+            return BundledRuntimeInfo(
+                archiveURL: archiveURL,
+                version: version,
+                dxmtBase: dxmtBase,
+                winePatchesSHA256: winePatchesSHA256,
+                sha256: sha
+            )
         }
         return nil
     }
