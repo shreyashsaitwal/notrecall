@@ -398,11 +398,9 @@ final class AppState: ObservableObject {
                 }
                 self.downloadProgress = 1.0
                 self.downloadStatusText = "Verifying & extracting Recall \(release.version)…"
-                var args = ["--runtime", dmgURL.path]
-                if runtimeOnly {
-                    args.insert("--runtime-only", at: 0)
-                }
-                await self.runProjectScriptInner("scripts/install.sh", extraArgs: args, switchToLogs: false)
+                let options = NotRecallInstallOptions(runtimeSource: dmgURL, runtimeOnly: runtimeOnly)
+                let title = runtimeOnly ? "Update Runtime Only (Recall \(release.version))" : "Install NotRecall (Recall \(release.version))"
+                await self.runInstallInner(options: options, logTitle: title, switchToLogs: false)
             } catch is CancellationError {
                 self.statusMessage = "Cancelled Recall \(release.version) download."
             } catch let err as RecallDownloadError {
@@ -708,38 +706,59 @@ final class AppState: ObservableObject {
         await refresh()
     }
 
-    func runProjectScript(_ relativePath: String, extraArgs: [String] = [], switchToLogs: Bool = false) async {
+    func installNotRecall(
+        runtimeSource: URL? = nil,
+        runtimeOnly: Bool = false,
+        dryRun: Bool = false,
+        switchToLogs: Bool = false
+    ) async {
+        guard !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
-        await runProjectScriptInner(relativePath, extraArgs: extraArgs, switchToLogs: switchToLogs)
+        let options = NotRecallInstallOptions(
+            runtimeSource: runtimeSource,
+            runtimeOnly: runtimeOnly,
+            dryRun: dryRun
+        )
+        let title: String
+        if dryRun {
+            title = "Dry Run Install"
+        } else if runtimeOnly {
+            title = "Update Runtime Only"
+        } else {
+            title = "Install / Update NotRecall"
+        }
+        await runInstallInner(options: options, logTitle: title, switchToLogs: switchToLogs)
     }
 
-    private func runProjectScriptInner(_ relativePath: String, extraArgs: [String] = [], switchToLogs: Bool = false) async {
-        guard let scriptURL = locateProjectScript(relativePath) else {
-            statusMessage = "Could not locate \(relativePath) next to NotRecallApp."
-            return
-        }
-        let result = await Task.detached { () -> (Int32, String) in
-            let proc = Process()
-            proc.executableURL = URL(filePath: "/bin/sh")
-            proc.arguments = [scriptURL.path] + extraArgs
-            let pipe = Pipe()
-            proc.standardOutput = pipe
-            proc.standardError = pipe
-            do {
-                try proc.run()
-                try? pipe.fileHandleForWriting.close()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                proc.waitUntilExit()
-                return (proc.terminationStatus, String(decoding: data, as: UTF8.self))
-            } catch {
-                return (1, error.localizedDescription)
-            }
+    func uninstallNotRecall() async {
+        guard !isBusy else { return }
+        isBusy = true
+        defer { isBusy = false }
+        let result = await Task.detached { () -> NotRecallOperationResult in
+            NotRecallInstaller.uninstall()
         }.value
-        statusMessage = result.0 == 0 ? "Completed \(relativePath)." : "Failed (\(result.0)): see Logs."
-        recentLogTitle = "\(relativePath) \(extraArgs.joined(separator: " "))"
-        recentLogText = result.1
-        if switchToLogs || result.0 != 0 {
+        statusMessage = result.summary
+        recentLogTitle = "Uninstall NotRecall"
+        recentLogText = result.log
+        if !result.succeeded {
+            selectedSection = .logs
+        }
+        await refresh(preserveLog: true)
+    }
+
+    private func runInstallInner(
+        options: NotRecallInstallOptions,
+        logTitle: String,
+        switchToLogs: Bool
+    ) async {
+        let result = await Task.detached { () -> NotRecallOperationResult in
+            NotRecallInstaller.install(options: options)
+        }.value
+        statusMessage = result.summary
+        recentLogTitle = logTitle
+        recentLogText = result.log
+        if switchToLogs || !result.succeeded {
             selectedSection = .logs
         }
         await refresh(preserveLog: true)
@@ -859,27 +878,6 @@ final class AppState: ObservableObject {
             try? await Task.sleep(for: .seconds(2))
             self?.diagnosticsCopied = false
         }
-    }
-
-    private func locateProjectScript(_ relativePath: String) -> URL? {
-        if let resDir = Bundle.main.resourceURL {
-            let bundled = resDir.appending(path: relativePath)
-            if FileManager.default.fileExists(atPath: bundled.path) { return bundled }
-        }
-        var roots: [URL] = []
-        if let exeDir = Bundle.main.executableURL?.deletingLastPathComponent() {
-            roots.append(exeDir)
-        }
-        roots.append(URL(filePath: FileManager.default.currentDirectoryPath))
-        for start in roots {
-            var dir = start
-            for _ in 0..<6 {
-                let candidate = dir.appending(path: relativePath)
-                if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
-                dir.deleteLastPathComponent()
-            }
-        }
-        return nil
     }
 
     nonisolated private static func isSteamHelperRunning() -> Bool {

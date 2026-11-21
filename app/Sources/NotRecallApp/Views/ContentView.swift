@@ -119,7 +119,7 @@ struct ContentView: View {
         .alert("Uninstall NotRecall?", isPresented: $state.confirmUninstall) {
             Button("Cancel", role: .cancel) {}
             Button("Uninstall", role: .destructive) {
-                Task { await state.runProjectScript("scripts/uninstall.sh") }
+                Task { await state.uninstallNotRecall() }
             }
         } message: {
             Text("This removes NotRecall’s Steam compatibility tool, staged runtime, settings, and downloaded Recall cache. Your Steam games and saved highlights stay untouched.")

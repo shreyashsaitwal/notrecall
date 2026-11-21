@@ -25,16 +25,6 @@ make package
 make clean
 ```
 
-## Installing from CLI
-
-You can also run the installer directly against a downloaded Recall `.dmg`, an installed `Recall.app`, a `runtime.tar.gz`, or an unpacked runtime directory:
-
-```sh
-make install RUNTIME=~/Downloads/Recall-1.6.6.dmg
-# or:
-make install RUNTIME=/Applications/Recall.app
-```
-
 ## Signing for Distribution
 
 By default, `make build-app` and `make package` use ad-hoc signing (`IDENTITY=-`). For distribution to other Macs, pass a Developer ID Application identity (which automatically enables `--options runtime --timestamp`):

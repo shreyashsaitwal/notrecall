@@ -21,7 +21,7 @@ struct OverviewView: View {
                     onConfigureOverwatch: { Task { await state.configureOverwatchInSteam() } },
                     onInstall: {
                         if let rt = state.activeRuntimeSource {
-                            Task { await state.runProjectScript("scripts/install.sh", extraArgs: ["--runtime", rt.path]) }
+                            Task { await state.installNotRecall(runtimeSource: rt) }
                         } else {
                             state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: false)
                         }
@@ -94,23 +94,25 @@ struct OverviewView: View {
                     onResetLocal: { state.clearCustomRuntime() },
                     onInstallOrUpdate: {
                         if let rt = state.activeRuntimeSource {
-                            Task { await state.runProjectScript("scripts/install.sh", extraArgs: ["--runtime", rt.path]) }
+                            Task { await state.installNotRecall(runtimeSource: rt) }
                         } else {
                             state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: false)
                         }
                     },
                     onUpdateRuntimeOnly: {
                         if let rt = state.activeRuntimeSource {
-                            Task { await state.runProjectScript("scripts/install.sh", extraArgs: ["--runtime-only", "--runtime", rt.path]) }
+                            Task { await state.installNotRecall(runtimeSource: rt, runtimeOnly: true) }
                         } else {
                             state.downloadAndInstallRecall(state.preferredDownloadRelease, runtimeOnly: true)
                         }
                     },
                     onDryRun: {
                         Task {
-                            var args = ["--dry-run"]
-                            if let rt = state.activeRuntimeSource { args += ["--runtime", rt.path] }
-                            await state.runProjectScript("scripts/install.sh", extraArgs: args, switchToLogs: true)
+                            await state.installNotRecall(
+                                runtimeSource: state.activeRuntimeSource,
+                                dryRun: true,
+                                switchToLogs: true
+                            )
                         }
                     },
                     onUninstall: { state.confirmUninstall = true }

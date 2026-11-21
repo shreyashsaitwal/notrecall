@@ -81,7 +81,7 @@ mkdir -p "$MACOS_DIR" "$RES_DIR/compat" "$RES_DIR/plugins" "$RES_DIR/scripts" "$
 cp -f "$SWIFT_BIN_DIR/NotRecallApp" "$MACOS_DIR/NotRecallApp"
 chmod 755 "$MACOS_DIR/NotRecallApp"
 
-# Embed compatibility tool and installer scripts.
+# Embed compatibility tool and helper scripts.
 cp -f "$PROJECT_DIR/compat/compatibilitytool.vdf" "$RES_DIR/compat/"
 cp -f "$PROJECT_DIR/compat/toolmanifest.vdf"      "$RES_DIR/compat/"
 cp -f "$PROJECT_DIR/compat/run"                   "$RES_DIR/compat/"
@@ -91,10 +91,8 @@ if [ -f "$PROJECT_DIR/plugins/notrecall.conf" ]; then
   cp -f "$PROJECT_DIR/plugins/notrecall.conf" "$RES_DIR/plugins/notrecall.conf"
 fi
 
-for s in install.sh uninstall.sh pipeline_hook.sh; do
-  cp -f "$PROJECT_DIR/scripts/$s" "$RES_DIR/scripts/$s"
-  chmod 755 "$RES_DIR/scripts/$s"
-done
+cp -f "$PROJECT_DIR/scripts/pipeline_hook.sh" "$RES_DIR/scripts/pipeline_hook.sh"
+chmod 755 "$RES_DIR/scripts/pipeline_hook.sh"
 
 if [ -x "$SYSINFO_BIN" ]; then
   cp -f "$SYSINFO_BIN" "$RES_DIR/helpers/notrecall-sysinfo"

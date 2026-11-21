@@ -41,7 +41,7 @@ wine_unix="$nr_runtime/lib/wine/x86_64-unix"
 
 if [ ! -x "$WINELOADER" ] || [ ! -x "$WINESERVER" ] || [ ! -d "$wine_unix" ]; then
   echo "=== notrecall runtime missing at $nr_runtime ===" >> "$log" 2>&1 || true
-  show_alert "NotRecall runtime not installed" "Run scripts/install.sh from the notrecall project to stage the Recall Wine + DXMT runtime."
+  show_alert "NotRecall runtime not installed" "Open NotRecall.app and click Install NotRecall to stage the Recall Wine + DXMT runtime."
   exit 1
 fi
 

@@ -6,7 +6,7 @@ Use [Recall](https://github.com/AsherJN/recall)'s patched Wine + DXMT runtime as
 
 - **Zero NotProton forks or Steam signature chasing:** Stock NotProton stays installed to unlock Steam Play, track Steam client updates, render the Compatibility UI, and provide the Steamworks bridge (`lsteamclient`, `steam.exe`, `overlay-shim.dylib`).
 - **100% of Recall's runtime, including `ntdll.so`:** Running as a standalone tool in `~/Library/Application Support/Steam/compatibilitytools.d/notrecall-proton` avoids NotProton's variant `ntdll.so` block — preserving Recall's `virtual_mutex` `dlopen` freeze fix and `msync` thread-exit fd-close fix alongside all DXMT, MetalFX, raw HID mouse, audio hotplug, and Media Foundation patches.
-- **Lightweight macOS `.app` bundle with verified Recall downloads:** `NotRecall.app` bundles `compat/`, `notrecall-sysinfo`, and installer scripts, and downloads official signed [Recall](https://github.com/AsherJN/recall/releases) `.dmg` releases from GitHub (verifying SHA-256 and code signature) — or lets you point to a local `Recall.app` / `.dmg` / `runtime.tar.gz`.
+- **Lightweight macOS `.app` bundle with verified Recall downloads:** `NotRecall.app` bundles `compat/` and `notrecall-sysinfo`, handles installation and uninstallation natively in Swift, and downloads official signed [Recall](https://github.com/AsherJN/recall/releases) `.dmg` releases from GitHub (verifying SHA-256 and code signature) — or lets you point to a local `Recall.app` / `.dmg` / `runtime.tar.gz`.
 - **Per-game offline shader precompilation:** Consolidates reboot-shifted `MTLDevice.registryID` folders and warms Metal's cache before launch, then compiles learned shaders into `.metallib` archives in the background after each session, isolated per Steam AppID.
 - **Native Steam Compatibility UI & custom Launch Options without OS Error 260:** `notrecall-proton` is adopted by stock NotProton via `build`/`flavor` metadata and `plugins/notrecall.conf` (`hide_crossover = 1`), so NotProton's shell launch hook wraps launches cleanly—letting you toggle MetalFX/DLSS, sharpening, Metal Performance HUD, raw HID mouse mode, mouse polling cap, frame pacing, FPS limit, shader memory, Game Mode, MSync, and logging directly in Steam → **Properties → Compatibility** (or pass standard `KEY=VAL %command%` Launch Options), with `NotRecall.app` (`settings.env`) serving as optional global defaults.
 
@@ -25,25 +25,6 @@ Use [Recall](https://github.com/AsherJN/recall)'s patched Wine + DXMT runtime as
 3. Click **Download & Install** (or **Install NotRecall** if a local Recall copy is detected) to stage the runtime, shader helpers, Steam compatibility tool, and NotProton Compatibility UI plugin. Use the **Recall Runtime & Installation** card on **Overview** for custom sources, **Update Runtime Only**, **Dry Run**, or **Uninstall…**.
 4. Click **Set Up in Steam** on the Overwatch hero card to configure Overwatch automatically, or right-click any DirectX 10/11 Windows game in Steam → **Properties → Compatibility** → enable **Force the use of a specific Steam Play compatibility tool** → select **NotRecall (Recall Wine + DXMT)**.
 5. Configure per-game graphics, mouse, system, and diagnostic options directly in Steam’s **Properties → Compatibility** tab. For High-Precision raw HID mouse input, use **Show Steam** and **Input Monitoring…** in **Recovery & Input** to add `Steam.app` in **System Settings → Privacy & Security → Input Monitoring**.
-
-### Using the CLI (`Makefile` / `scripts/install.sh`)
-
-```sh
-# Validate shell scripts, VDF manifests, and behavioral tests
-make check
-
-# Preview installation without modifying ~/Library/Application Support
-make dry-run RUNTIME=~/Downloads/Recall-1.6.6.dmg
-
-# Install using a Recall .dmg, Recall.app, runtime.tar.gz, or unpacked runtime directory
-make install RUNTIME=~/Downloads/Recall-1.6.6.dmg
-
-# Update only runtime/ + Steamworks bridge without touching prefixes, shader caches, or settings
-sh scripts/install.sh --runtime-only --runtime ~/Downloads/Recall-1.6.6.dmg
-
-# Uninstall tool, staged runtime, settings, and DMG cache (preserves Steam prefixes and game saves)
-make uninstall
-```
 
 ## `NotRecall.app` Features
 
