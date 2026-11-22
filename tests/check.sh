@@ -459,8 +459,9 @@ HOME="$fake_home" \
   STEAM_COMPAT_DATA_PATH="$cfg_data" \
   NOTPROTON_NOTRECALL_METALFX=1 \
   NOTPROTON_NOTRECALL_MTL_HUD=1 \
-  NOTPROTON_NOTRECALL_DISABLE_GAMEMODE=1 \
-  NOTPROTON_NOTRECALL_DISABLE_BT_MIC_FIX=1 \
+  NOTPROTON_ENV_NOTRECALL_GAME_MODE=off \
+  NOTPROTON_ENV_NOTRECALL_BACKGROUND_SHADERS=off \
+  NOTPROTON_ENV_NOTRECALL_BT_MIC_ROUTING=off \
   NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS=high \
   NOTPROTON_ENV_NOTRECALL_MOUSE_MODE=hid \
   NOTPROTON_ENV_NOTRECALL_FPS_LIMIT=144 \
@@ -471,6 +472,7 @@ HOME="$fake_home" \
 assert_env "$np_env" "DXMT_ENABLE_NVEXT=1"
 assert_env "$np_env" "MTL_HUD_ENABLED=1"
 assert_env "$np_env" "NOTRECALL_GAME_MODE=0"
+assert_env "$np_env" "NOTRECALL_SKIP_PRECOMPILE=1"
 assert_env "$np_env" "NOTRECALL_BT_MIC_FIX=0"
 assert_env "$np_env" "WINEMAC_INPUT_VARIANT=precise"
 assert_env "$np_env" "WINEMAC_RAW_SOURCE=hid"
@@ -657,13 +659,13 @@ grep -Fqx "1" "$ms_reg_log"
 assert_env "$ms_env" "WINEMSYNC=1"
 [ "$(cat "$ms_data/.notrecall-msync")" = "1" ]
 
-# Flipping to Turn Off MSync on an existing prefix must kill/wait wineserver and pass WINEMSYNC=0.
+# Switching MSync to Off on an existing prefix must kill/wait wineserver and pass WINEMSYNC=0.
 : > "$ms_ws_log"
 HOME="$fake_home" \
   STEAM_COMPAT_APP_ID=2357570 \
   STEAM_COMPAT_DATA_PATH="$ms_data" \
   NOTRECALL_GAME_MODE=0 \
-  NOTPROTON_NOTRECALL_DISABLE_MSYNC=1 \
+  NOTPROTON_ENV_NOTRECALL_MSYNC=off \
   TEST_WINESERVER_LOG="$ms_ws_log" \
   TEST_ENV_OUT="$ms_env" \
   sh "$PROJECT_DIR/compat/run" run "C:\\Games\\Overwatch\\vcredist.exe"

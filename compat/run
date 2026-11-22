@@ -126,18 +126,37 @@ sync_notproton_adoption
 # Translate Steam Compatibility UI plugin vars (set by NotProton's notrecall.conf
 # when notrecall-proton is adopted) without clobbering explicit raw env overrides.
 load_notproton_plugin_env() {
-  [ "${NOTPROTON_NOTRECALL_METALFX:-}" = "1" ]           && [ -z "${DXMT_ENABLE_NVEXT+1}" ]          && export DXMT_ENABLE_NVEXT=1
-  [ "${NOTPROTON_NOTRECALL_MTL_HUD:-}" = "1" ]           && [ -z "${MTL_HUD_ENABLED+1}" ]            && export MTL_HUD_ENABLED=1
+  [ "${NOTPROTON_NOTRECALL_METALFX:-}" = "1" ]           && [ -z "${DXMT_ENABLE_NVEXT+1}" ]           && export DXMT_ENABLE_NVEXT=1
+  [ "${NOTPROTON_NOTRECALL_MTL_HUD:-}" = "1" ]           && [ -z "${MTL_HUD_ENABLED+1}" ]             && export MTL_HUD_ENABLED=1
   [ "${NOTPROTON_NOTRECALL_FAST_KEYS:-}" = "1" ]         && [ -z "${WINEMAC_APPKIT_UPDATE_CYCLE+1}" ] && export WINEMAC_APPKIT_UPDATE_CYCLE=0
   [ "${NOTPROTON_NOTRECALL_PROXY_AUTO_DETECT:-}" = "1" ] && [ -z "${NOTRECALL_PROXY_AUTO_DETECT+1}" ] && export NOTRECALL_PROXY_AUTO_DETECT=1
-  [ "${NOTPROTON_NOTRECALL_DISABLE_GAMEMODE:-}" = "1" ]  && [ -z "${NOTRECALL_GAME_MODE+1}" ]        && export NOTRECALL_GAME_MODE=0
-  [ "${NOTPROTON_NOTRECALL_NO_PRECOMPILE:-}" = "1" ]     && [ -z "${NOTRECALL_SKIP_PRECOMPILE+1}" ]  && export NOTRECALL_SKIP_PRECOMPILE=1
-  [ "${NOTPROTON_NOTRECALL_RAW_CONTROLLERS:-}" = "1" ]   && [ -z "${NOTRECALL_RAW_CONTROLLERS+1}" ]  && export NOTRECALL_RAW_CONTROLLERS=1
-  [ "${NOTPROTON_NOTRECALL_DISABLE_MSYNC:-}" = "1" ]     && [ -z "${WINEMSYNC+1}" ]                  && export WINEMSYNC=0
+  [ "${NOTPROTON_NOTRECALL_RAW_CONTROLLERS:-}" = "1" ]   && [ -z "${NOTRECALL_RAW_CONTROLLERS+1}" ]   && export NOTRECALL_RAW_CONTROLLERS=1
+  [ "${NOTPROTON_NOTRECALL_LOG_CRASHES:-}" = "1" ]       && [ -z "${NOTRECALL_LOG_CRASHES+1}" ]       && export NOTRECALL_LOG_CRASHES=1
+  [ "${NOTPROTON_NOTRECALL_LOG_GRAPHICS:-}" = "1" ]      && [ -z "${NOTRECALL_LOG_GRAPHICS+1}" ]      && export NOTRECALL_LOG_GRAPHICS=1
+  [ "${NOTPROTON_NOTRECALL_LOG_MOUSE:-}" = "1" ]         && [ -z "${NOTRECALL_LOG_MOUSE+1}" ]         && export NOTRECALL_LOG_MOUSE=1
+
+  case "${NOTPROTON_ENV_NOTRECALL_GAME_MODE:-}" in
+    on)  [ -z "${NOTRECALL_GAME_MODE+1}" ] && export NOTRECALL_GAME_MODE=1 ;;
+    off) [ -z "${NOTRECALL_GAME_MODE+1}" ] && export NOTRECALL_GAME_MODE=0 ;;
+  esac
+  case "${NOTPROTON_ENV_NOTRECALL_BACKGROUND_SHADERS:-}" in
+    on)  [ -z "${NOTRECALL_SKIP_PRECOMPILE+1}" ] && export NOTRECALL_SKIP_PRECOMPILE=0 ;;
+    off) [ -z "${NOTRECALL_SKIP_PRECOMPILE+1}" ] && export NOTRECALL_SKIP_PRECOMPILE=1 ;;
+  esac
+  case "${NOTPROTON_ENV_NOTRECALL_MSYNC:-}" in
+    on)  [ -z "${WINEMSYNC+1}" ] && export WINEMSYNC=1 ;;
+    off) [ -z "${WINEMSYNC+1}" ] && export WINEMSYNC=0 ;;
+  esac
+  case "${NOTPROTON_ENV_NOTRECALL_BT_MIC_ROUTING:-}" in
+    on)  [ -z "${NOTRECALL_BT_MIC_FIX+1}" ] && export NOTRECALL_BT_MIC_FIX=1 ;;
+    off) [ -z "${NOTRECALL_BT_MIC_FIX+1}" ] && export NOTRECALL_BT_MIC_FIX=0 ;;
+  esac
+
+  # Backward-compatible fallbacks for legacy inverted plugin keys.
+  [ "${NOTPROTON_NOTRECALL_DISABLE_GAMEMODE:-}" = "1" ]   && [ -z "${NOTRECALL_GAME_MODE+1}" ]       && export NOTRECALL_GAME_MODE=0
+  [ "${NOTPROTON_NOTRECALL_NO_PRECOMPILE:-}" = "1" ]      && [ -z "${NOTRECALL_SKIP_PRECOMPILE+1}" ] && export NOTRECALL_SKIP_PRECOMPILE=1
+  [ "${NOTPROTON_NOTRECALL_DISABLE_MSYNC:-}" = "1" ]      && [ -z "${WINEMSYNC+1}" ]                 && export WINEMSYNC=0
   [ "${NOTPROTON_NOTRECALL_DISABLE_BT_MIC_FIX:-}" = "1" ] && [ -z "${NOTRECALL_BT_MIC_FIX+1}" ]      && export NOTRECALL_BT_MIC_FIX=0
-  [ "${NOTPROTON_NOTRECALL_LOG_CRASHES:-}" = "1" ]       && [ -z "${NOTRECALL_LOG_CRASHES+1}" ]      && export NOTRECALL_LOG_CRASHES=1
-  [ "${NOTPROTON_NOTRECALL_LOG_GRAPHICS:-}" = "1" ]      && [ -z "${NOTRECALL_LOG_GRAPHICS+1}" ]     && export NOTRECALL_LOG_GRAPHICS=1
-  [ "${NOTPROTON_NOTRECALL_LOG_MOUSE:-}" = "1" ]         && [ -z "${NOTRECALL_LOG_MOUSE+1}" ]        && export NOTRECALL_LOG_MOUSE=1
 
   [ -n "${NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS:-}" ] && [ -z "${NOTRECALL_METALFX_SHARPNESS+1}" ] && export NOTRECALL_METALFX_SHARPNESS="$NOTPROTON_ENV_NOTRECALL_METALFX_SHARPNESS"
   [ -n "${NOTPROTON_ENV_NOTRECALL_MOUSE_MODE:-}" ]        && [ -z "${NOTRECALL_MOUSE_MODE+1}" ]        && export NOTRECALL_MOUSE_MODE="$NOTPROTON_ENV_NOTRECALL_MOUSE_MODE"
@@ -524,7 +543,7 @@ if [ -n "${STEAM_COMPAT_DATA_PATH:-}" ]; then
   export WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
   mkdir -p "$WINEPREFIX"
   lay_out_proton_profile
-  # If WINEMSYNC changed since the last launch in this prefix (e.g. toggling Turn Off MSync
+  # If WINEMSYNC changed since the last launch in this prefix (e.g. switching MSync On/Off
   # or following a Steam install script), stop any lingering wineserver so ntdll msync_init
   # does not abort on a client/server mode mismatch.
   msync_stamp="$STEAM_COMPAT_DATA_PATH/.notrecall-msync"
