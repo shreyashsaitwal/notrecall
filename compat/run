@@ -151,6 +151,10 @@ load_notproton_plugin_env() {
     on)  [ -z "${NOTRECALL_BT_MIC_FIX+1}" ] && export NOTRECALL_BT_MIC_FIX=1 ;;
     off) [ -z "${NOTRECALL_BT_MIC_FIX+1}" ] && export NOTRECALL_BT_MIC_FIX=0 ;;
   esac
+  case "${NOTPROTON_ENV_NOTRECALL_STEAM_OVERLAY:-}" in
+    on)  [ -z "${NOTRECALL_STEAM_OVERLAY+1}" ] && export NOTRECALL_STEAM_OVERLAY=1 ;;
+    off) [ -z "${NOTRECALL_STEAM_OVERLAY+1}" ] && export NOTRECALL_STEAM_OVERLAY=0 ;;
+  esac
 
   # Backward-compatible fallbacks for legacy inverted plugin keys.
   [ "${NOTPROTON_NOTRECALL_DISABLE_GAMEMODE:-}" = "1" ]   && [ -z "${NOTRECALL_GAME_MODE+1}" ]       && export NOTRECALL_GAME_MODE=0
@@ -190,8 +194,9 @@ load_settings_file() {
       DXMT_ENABLE_NVEXT|NOTRECALL_METALFX_SHARPNESS|NOTRECALL_MOUSE_MODE|NOTRECALL_MOUSE_RATE|\
       NOTRECALL_FRAME_PACING|NOTRECALL_FPS_LIMIT|NOTRECALL_SHADER_MEM_MB|MTL_HUD_ENABLED|\
       WINEMAC_APPKIT_UPDATE_CYCLE|NOTRECALL_PROXY_AUTO_DETECT|NOTRECALL_GAME_MODE|\
-      NOTRECALL_SKIP_PRECOMPILE|NOTRECALL_RAW_CONTROLLERS|WINEMSYNC|NOTRECALL_BT_MIC_FIX|\
-      NOTRECALL_LOG_CRASHES|NOTRECALL_LOG_GRAPHICS|NOTRECALL_LOG_MOUSE|NOTRECALL_MOUSE_EXE)
+      NOTRECALL_STEAM_OVERLAY|NOTRECALL_SKIP_PRECOMPILE|NOTRECALL_RAW_CONTROLLERS|WINEMSYNC|\
+      NOTRECALL_BT_MIC_FIX|NOTRECALL_LOG_CRASHES|NOTRECALL_LOG_GRAPHICS|NOTRECALL_LOG_MOUSE|\
+      NOTRECALL_MOUSE_EXE)
         eval "already=\${$key+1}"
         if [ -z "$already" ]; then
           export "$key=$val"
@@ -1498,12 +1503,17 @@ if [ -n "$cache_root" ] && [ -x "$pipeline_hook" ]; then
   "$pipeline_hook" pre "$cache_root" "$pipeline_program" "$log" || true
 fi
 
-# 9. Wire Steam Overlay shim and launch game through steam.exe shim.
-inserts="${STEAM_DYLD_INSERT_LIBRARIES:-}"
-overlay_shim="$np_support/overlay-shim.dylib"
-if [ -n "$inserts" ] && [ -f "$overlay_shim" ]; then
-  export NOTPROTON_OVERLAY_SHIM="$overlay_shim"
-  inserts="$overlay_shim:$inserts"
+# 9. Wire Steam Overlay shim (unless disabled via NOTRECALL_STEAM_OVERLAY=0) and launch game through steam.exe shim.
+inserts=""
+if [ "${NOTRECALL_STEAM_OVERLAY:-1}" != "0" ]; then
+  inserts="${STEAM_DYLD_INSERT_LIBRARIES:-}"
+  overlay_shim="$np_support/overlay-shim.dylib"
+  if [ -n "$inserts" ] && [ -f "$overlay_shim" ]; then
+    export NOTPROTON_OVERLAY_SHIM="$overlay_shim"
+    inserts="$overlay_shim:$inserts"
+  fi
+else
+  unset STEAM_DYLD_INSERT_LIBRARIES NOTPROTON_OVERLAY_SHIM DYLD_INSERT_LIBRARIES || true
 fi
 
 child_pid=""
@@ -1531,7 +1541,11 @@ trap cleanup TERM INT HUP
 
 (
   export WINELOADER="$launch_wine"
-  [ -z "$inserts" ] || export DYLD_INSERT_LIBRARIES="$inserts"
+  if [ -n "$inserts" ]; then
+    export DYLD_INSERT_LIBRARIES="$inserts"
+  else
+    unset DYLD_INSERT_LIBRARIES || true
+  fi
   exec "$launch_wine" "$shim_exe" "$@"
 ) >> "$log" 2>&1 &
 child_pid=$!
