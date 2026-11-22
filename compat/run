@@ -126,7 +126,7 @@ sync_notproton_adoption
 # Translate Steam Compatibility UI plugin vars (set by NotProton's notrecall.conf
 # when notrecall-proton is adopted) without clobbering explicit raw env overrides.
 load_notproton_plugin_env() {
-  [ "${NOTPROTON_NOTRECALL_METALFX:-}" = "1" ]           && [ -z "${DXMT_ENABLE_NVEXT+1}" ]           && export DXMT_ENABLE_NVEXT=1
+  [ "${NOTPROTON_NOTRECALL_METALFX:-}" = "1" ]           && export DXMT_ENABLE_NVEXT=1
   [ "${NOTPROTON_NOTRECALL_MTL_HUD:-}" = "1" ]           && [ -z "${MTL_HUD_ENABLED+1}" ]             && export MTL_HUD_ENABLED=1
   [ "${NOTPROTON_NOTRECALL_FAST_KEYS:-}" = "1" ]         && [ -z "${WINEMAC_APPKIT_UPDATE_CYCLE+1}" ] && export WINEMAC_APPKIT_UPDATE_CYCLE=0
   [ "${NOTPROTON_NOTRECALL_PROXY_AUTO_DETECT:-}" = "1" ] && [ -z "${NOTRECALL_PROXY_AUTO_DETECT+1}" ] && export NOTRECALL_PROXY_AUTO_DETECT=1
@@ -881,10 +881,11 @@ EOF
         for my $k (sort keys %launch)   { $set_key->($k, $launch{$k}, 0); }
         for my $k (sort keys %baseline) { $set_key->($k, $baseline{$k}, 1); }
       } else {
-        # Always enforce fitted per-display resolution/refresh and clamp WindowedWidth/Height.
-        $set_key->("FullScreenWidth",   $game_w, 0);
-        $set_key->("FullScreenHeight",  $game_h, 0);
-        $set_key->("FullScreenRefresh", $want_hz, 0);
+        # Always enforce fitted per-display resolution/refresh, exclusive fullscreen flag, and clamp WindowedWidth/Height.
+        $set_key->("FullScreenWidth",         $game_w, 0);
+        $set_key->("FullScreenHeight",        $game_h, 0);
+        $set_key->("FullScreenRefresh",       $want_hz, 0);
+        $set_key->("FullscreenWindowEnabled", "0", 0);
         my $ww = $get_val->("[Render.13]", "WindowedWidth");
         my $wh = $get_val->("[Render.13]", "WindowedHeight");
         if (!defined $ww || $ww !~ /^[0-9]+$/ || $ww > $max_w || !defined $wh || $wh !~ /^[0-9]+$/ || $wh > $max_h) {
@@ -1524,6 +1525,7 @@ trap cleanup TERM INT HUP
 {
   printf '%s\n' "=== launching: $launch_wine $shim_exe $* ==="
   printf '%s\n' "DXMT_CONFIG_FILE=${DXMT_CONFIG_FILE:-} DXMT_CONFIG=${DXMT_CONFIG:-}"
+  printf '%s\n' "DXMT_ENABLE_NVEXT=${DXMT_ENABLE_NVEXT:-0} WINEDLLOVERRIDES=${WINEDLLOVERRIDES:-}"
   printf '%s\n' "WINEMAC_MOUSELOOK=${WINEMAC_MOUSELOOK:-} WINEMAC_RAW_SOURCE=${WINEMAC_RAW_SOURCE:-} WINEMAC_MOUSELOOK_RAW_INTERVAL_US=${WINEMAC_MOUSELOOK_RAW_INTERVAL_US:-}"
 } >> "$log" 2>&1 || true
 
