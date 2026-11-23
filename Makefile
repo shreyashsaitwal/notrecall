@@ -1,8 +1,10 @@
-APP_VERSION ?= 0.1.0
+APP_VERSION ?= 1.0.0
 IDENTITY ?= -
-RECALL_DIR ?= ../recall
+JOBS ?= 4
+RECALL_DIR ?=
+GPTK_DIR ?=
 
-export APP_VERSION IDENTITY RECALL_DIR
+export APP_VERSION IDENTITY JOBS RECALL_DIR GPTK_DIR
 
 SYSINFO_BIN := build/helpers/notrecall-sysinfo
 RUNTIME_ARCHIVE := build/runtime/runtime.tar.gz
@@ -13,10 +15,12 @@ RUNTIME_ARCHIVE := build/runtime/runtime.tar.gz
 help:
 	@echo "NotRecall build targets:"
 	@echo "  make check          Validate shell syntax, VDF manifests, and compat/run behavior"
-	@echo "  make build-runtime  Assemble bundled Wine + DXMT runtime and shader helpers from RECALL_DIR"
+	@echo "  make build-runtime  Bootstrap Recall (if needed) and bundle Wine + DXMT runtime + helpers"
 	@echo "  make build-app      Build self-contained build/NotRecall.app (with bundled runtime + helpers)"
 	@echo "  make package        Run checks and build build/NotRecall.app, .zip, and .dmg (+ .sha256)"
 	@echo "  make clean          Remove build/ artifacts"
+	@echo ""
+	@echo "Optional variables: RECALL_DIR=<path> GPTK_DIR=<path> JOBS=4 APP_VERSION=1.0.0 IDENTITY=-"
 
 check:
 	@sh tests/check.sh
@@ -35,7 +39,12 @@ $(SYSINFO_BIN): scripts/notrecall_sysinfo.m
 build-sysinfo: $(SYSINFO_BIN)
 
 build-runtime:
-	@python3 scripts/bundle_runtime.py --recall-dir "$(RECALL_DIR)" --out build --identity "$(IDENTITY)"
+	@python3 scripts/bundle_runtime.py \
+		--out build \
+		--identity "$(IDENTITY)" \
+		--jobs "$(JOBS)" \
+		$(if $(RECALL_DIR),--recall-dir "$(RECALL_DIR)") \
+		$(if $(GPTK_DIR),--gptk-dir "$(GPTK_DIR)")
 
 build-app: $(SYSINFO_BIN) build-runtime
 	@sh scripts/package.sh --app-only

@@ -25,7 +25,6 @@ from datetime import date
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_RECALL_DIR = PROJECT_DIR.parent / 'recall'
 MINIMUM_MACOS = '15.0'
 
 
@@ -661,18 +660,28 @@ def bundle_runtime(recall_dir: Path, work: Path, out_dir: Path, version: str, id
 
 
 def main():
+    import prepare_recall
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--recall-dir', type=Path, default=DEFAULT_RECALL_DIR)
+    parser.add_argument('--recall-dir', type=Path, default=None,
+                        help='Local Recall checkout (defaults to ../recall if present, else clones pinned Recall)')
+    parser.add_argument('--gptk-dir', type=Path, default=None,
+                        help='Path to Apple Game Porting Toolkit volume/folder or libd3dshared.dylib')
     parser.add_argument('--out', type=Path, default=PROJECT_DIR / 'build')
     parser.add_argument('--version', default=f'notrecall-{date.today().strftime("%Y%m%d")}')
     parser.add_argument('--identity', default='-')
-    parser.add_argument('--force', action='store_true')
+    parser.add_argument('--jobs', type=int, default=4)
+    parser.add_argument('--rebuild-recall', action='store_true',
+                        help='Re-run Recall Phase 2 dependencies, Wine, and DXMT builds before bundling')
+    parser.add_argument('--force', action='store_true',
+                        help='Force re-assembling runtime.tar.gz even if cached metadata matches')
     args = parser.parse_args()
 
-    recall_dir = args.recall_dir.resolve()
-    work = recall_dir / 'runtime/phase-2'
     out_dir = args.out.resolve()
+    recall_dir = prepare_recall.prepare_recall_source(args.recall_dir, out_dir)
+    work = recall_dir / 'runtime/phase-2'
 
+    prepare_recall.ensure_recall_phase2(recall_dir, work, args.jobs, args.gptk_dir, args.rebuild_recall)
     build_helpers(recall_dir, work, out_dir / 'helpers', args.identity)
     bundle_runtime(recall_dir, work, out_dir, args.version, args.identity, args.force)
 

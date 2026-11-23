@@ -8,7 +8,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 OUT_DIR="${OUT_DIR:-$PROJECT_DIR/build}"
 APP_BUNDLE="$OUT_DIR/NotRecall.app"
-APP_VERSION="${APP_VERSION:-0.1.0}"
+APP_VERSION="${APP_VERSION:-1.0.0}"
 APP_BUILD="${APP_BUILD:-1}"
 IDENTITY="${IDENTITY:--}"
 APP_ONLY=0
@@ -130,10 +130,35 @@ if [ -f "$APP_ICON_PNG" ]; then
   mkdir -p "$ICONSET_DIR"
   for sz in 16 32 128 256 512; do
     sz2=$((sz * 2))
-    /usr/bin/sips -z "$sz" "$sz" "$APP_ICON_PNG" --out "$ICONSET_DIR/icon_${sz}x${sz}.png" >/dev/null
-    /usr/bin/sips -z "$sz2" "$sz2" "$APP_ICON_PNG" --out "$ICONSET_DIR/icon_${sz}x${sz}@2x.png" >/dev/null
+    /usr/bin/sips -s format png -z "$sz" "$sz" "$APP_ICON_PNG" --out "$ICONSET_DIR/icon_${sz}x${sz}.png" >/dev/null
+    /usr/bin/sips -s format png -z "$sz2" "$sz2" "$APP_ICON_PNG" --out "$ICONSET_DIR/icon_${sz}x${sz}@2x.png" >/dev/null
   done
-  /usr/bin/iconutil -c icns "$ICONSET_DIR" -o "$RES_DIR/AppIcon.icns"
+  if ! /usr/bin/iconutil -c icns "$ICONSET_DIR" -o "$RES_DIR/AppIcon.icns" 2>/dev/null; then
+    /usr/bin/python3 - "$ICONSET_DIR" "$RES_DIR/AppIcon.icns" <<'PY'
+import struct, sys
+from pathlib import Path
+
+iconset = Path(sys.argv[1])
+out_icns = Path(sys.argv[2])
+entries = [
+    (b"icp4", "icon_16x16.png"),
+    (b"ic11", "icon_16x16@2x.png"),
+    (b"icp5", "icon_32x32.png"),
+    (b"ic12", "icon_32x32@2x.png"),
+    (b"ic07", "icon_128x128.png"),
+    (b"ic13", "icon_128x128@2x.png"),
+    (b"ic08", "icon_256x256.png"),
+    (b"ic14", "icon_256x256@2x.png"),
+    (b"ic09", "icon_512x512.png"),
+    (b"ic10", "icon_512x512@2x.png"),
+]
+body = bytearray()
+for tag, name in entries:
+    data = (iconset / name).read_bytes()
+    body += tag + struct.pack(">I", len(data) + 8) + data
+out_icns.write_bytes(b"icns" + struct.pack(">I", len(body) + 8) + bytes(body))
+PY
+  fi
   rm -rf "$ICONSET_DIR"
   ICONSET_DIR=""
 fi
