@@ -81,6 +81,9 @@ final class AppState: ObservableObject {
     @Published var confirmForceQuit = false
     @Published var confirmResetDisplay = false
     @Published var confirmUninstall = false
+    @Published var showingImportFromRecall = false
+    @Published var recallInspection: RecallInspection?
+    @Published var recallImportOptions = RecallImportOptions()
     @Published var pendingClearShaderEntry: ShaderCacheEntry?
     @Published var pendingRebuildShaderEntry: ShaderCacheEntry?
     @Published var diagnosticsCopied = false
@@ -380,6 +383,74 @@ final class AppState: ObservableObject {
     func clearCustomRuntime() {
         customRuntimeURL = nil
         statusMessage = "Reverted to bundled runtime."
+    }
+
+    func openImportFromRecall() {
+        let homeDir = home
+        let defaultRoot = RecallImporter.defaultRecallRoot(home: homeDir)
+        showingImportFromRecall = true
+        Task {
+            let info = await Task.detached {
+                RecallImporter.inspect(root: defaultRoot, home: homeDir)
+            }.value
+            recallInspection = info
+        }
+    }
+
+    func selectRecallFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Recall Data Folder"
+        panel.message = "Choose your Recall Overwatch2Mac data folder (usually ~/Library/Application Support/Overwatch2Mac)."
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if let existing = recallInspection?.rootURL {
+            panel.directoryURL = existing.deletingLastPathComponent()
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let homeDir = home
+        Task {
+            let info = await Task.detached {
+                RecallImporter.inspect(root: url, home: homeDir)
+            }.value
+            recallInspection = info
+        }
+    }
+
+    func importFromRecall(options: RecallImportOptions) async {
+        guard !isBusy, let inspection = recallInspection, inspection.isValidRecallFolder else { return }
+        isBusy = true
+        defer { isBusy = false }
+
+        let homeDir = home
+        let result = await Task.detached { () -> NotRecallOperationResult in
+            let fm = FileManager.default
+            let libraries = Self.discoverSteamLibraries(home: homeDir)
+            let existingPfx = libraries.map { $0.appending(path: "compatdata/2357570") }
+                .first { fm.fileExists(atPath: $0.appending(path: "pfx").path) }
+            let owLibrary = libraries.first { fm.fileExists(atPath: $0.appending(path: "appmanifest_2357570.acf").path) }
+            guard let compatDir = existingPfx ?? (owLibrary ?? libraries.first)?.appending(path: "compatdata/2357570") else {
+                return NotRecallOperationResult(
+                    succeeded: false,
+                    log: "Error: No Steam library found for Overwatch (AppID 2357570).",
+                    summary: "Import failed: no Steam library found."
+                )
+            }
+            return RecallImporter.performImport(
+                inspection: inspection,
+                options: options,
+                compatDir: compatDir,
+                home: homeDir
+            )
+        }.value
+
+        statusMessage = result.summary
+        recentLogTitle = "Import from Recall"
+        recentLogText = result.log
+        if !result.succeeded {
+            selectedSection = .logs
+        }
+        await refresh(preserveLog: true)
     }
 
     func restartSteam() async {

@@ -24,6 +24,11 @@ struct NotRecallApp: App {
                 }
                 .keyboardShortcut("h", modifiers: [.command, .shift])
 
+                Button("Import from Recall…") {
+                    state.openImportFromRecall()
+                }
+                .disabled(state.isBusy)
+
                 Divider()
 
                 Button("Restart Steam") {

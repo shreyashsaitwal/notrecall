@@ -100,6 +100,9 @@ struct ContentView: View {
         } message: {
             Text("This removes NotRecall’s Steam compatibility tool, staged runtime, and settings. Your Steam games and saved highlights stay untouched.")
         }
+        .sheet(isPresented: $state.showingImportFromRecall) {
+            ImportFromRecallSheet(state: state)
+        }
         .task(id: state.anyShaderCompiling) {
             guard state.anyShaderCompiling else { return }
             while !Task.isCancelled {

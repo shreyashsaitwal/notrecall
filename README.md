@@ -30,7 +30,7 @@ Recall is built as a standalone Battle.net app tuned specifically for Overwatch.
 
 ## `NotRecall.app`
 
-* **Overview (`⌘1`):** Overwatch readiness with **Play Overwatch** (`⌘P`) / **Set Up in Steam** and **Highlights** (`⇧⌘H`) actions, live system health/runtime/shader status, contextual warnings (Low Power Mode, thermals, memory pressure, recent GPU hangs, bundled runtime updates), **Runtime & Installation** (`Choose…` / `Reset` local runtime override, **Install / Update**, **Update Runtime Only**, **Dry Run**, **Uninstall…**), **Recovery & Input** (**Show Steam**, **Input Monitoring…**, **Reset Display Settings**, **Restart Steam**, **Force Quit Overwatch**), and **Stack & Shaders**.
+* **Overview (`⌘1`):** Overwatch readiness with **Play Overwatch** (`⌘P`) / **Set Up in Steam** and **Highlights** (`⇧⌘H`) actions, live system health/runtime/shader status, contextual warnings (Low Power Mode, thermals, memory pressure, recent GPU hangs, bundled runtime updates), **Runtime & Installation** (`Choose…` / `Reset` local runtime override, **Install / Update**, **Update Runtime Only**, **Dry Run**, **Uninstall…**), **Recovery & Input** (**Show Steam**, **Input Monitoring…**, **Import from Recall**, **Reset Display Settings**, **Restart Steam**, **Force Quit Overwatch**), and **Stack & Shaders**.
 * **Shaders (`⌘2`):** Scans all Steam libraries (including external drives), resolves game titles from `appmanifest_<appid>.acf`, tracks live background optimization progress and post-macOS-update status, and offers per-game **Optimize Now**, **Rebuild Shaders**, and **Clear Cache**.
 * **Logs (`⌘3`):** Shows **Dry Run** / installer output and the latest `notrecall-run.log` across Steam libraries, with one-click **Copy Diagnostics** (`⇧⌘C`).
 

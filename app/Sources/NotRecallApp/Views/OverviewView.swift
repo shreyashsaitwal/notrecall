@@ -105,6 +105,7 @@ struct OverviewView: View {
                         isBusy: state.isBusy,
                         onShowSteam: { state.revealSteamInFinder() },
                         onOpenInputMonitoring: { state.openInputMonitoringSettings() },
+                        onImportFromRecall: { state.openImportFromRecall() },
                         onResetDisplay: { state.confirmResetDisplay = true },
                         onRestartSteam: { Task { await state.restartSteam() } },
                         onForceQuit: { state.confirmForceQuit = true }
@@ -502,6 +503,7 @@ struct RecoveryControlsCard: View {
     let isBusy: Bool
     let onShowSteam: () -> Void
     let onOpenInputMonitoring: () -> Void
+    let onImportFromRecall: () -> Void
     let onResetDisplay: () -> Void
     let onRestartSteam: () -> Void
     let onForceQuit: () -> Void
@@ -531,6 +533,16 @@ struct RecoveryControlsCard: View {
                     }
                     .padding(.top, 2)
                 }
+
+                Divider()
+
+                ControlRow(
+                    title: "Import from Recall",
+                    detail: "Copy shaders, Overwatch settings, highlights, and custom dxmt.conf from Recall.",
+                    buttonTitle: "Import…",
+                    disabled: isBusy,
+                    action: onImportFromRecall
+                )
 
                 Divider()
 
