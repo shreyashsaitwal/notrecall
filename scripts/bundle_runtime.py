@@ -130,9 +130,9 @@ def build_helpers(recall_dir: Path, work: Path, helpers_out: Path, identity: str
 
 
 WINEMACMF_PE_SOURCES = ('aac_encoder', 'h264_encoder', 'main', 'mpeg4_sink')
-WINEMACMF_UNIX_SOURCES = ('unixlib.c', 'macmf_cocoa.m')
+WINEMACMF_UNIX_SOURCES = ('unixlib.c', 'mp4_writer.c', 'macmf_cocoa.m')
 WINEMACMF_FRAMEWORKS = (
-    'AVFoundation', 'AudioToolbox', 'CoreMedia', 'CoreVideo',
+    'AudioToolbox', 'CoreMedia', 'CoreVideo',
     'VideoToolbox', 'Foundation', 'CoreFoundation',
 )
 
@@ -185,6 +185,8 @@ def _make_expand_cross(command: str, makefile: str, cross_cflags: str) -> str:
 
 
 RECALL_WINE_OVERLAY_PATCHES = (
+    'patches/wine-v1-canvas.patch',
+    'patches/wine-mouselook.patch',
     'patches/wine-portable-directory-boolean.patch',
     'patches/wine-server-registry-save.patch',
     'patches/wine-ntdll-syscall-log.patch',
@@ -282,18 +284,28 @@ def build_recall_wine_overlays(recall_dir: Path, work: Path, stage: Path, runtim
 
     print('==> Building Recall native Wine overlays (ntdll, winemac, wineserver, win32u, audio, services, winemacmf)', flush=True)
     try:
-        for d in RECALL_WINE_SRC_DIRS:
-            shutil.copytree(wine_src / d, src_copy / d)
-        (src_copy / 'loader').mkdir(parents=True)
-        shutil.copy2(wine_src / 'loader/wine.inf.in', src_copy / 'loader/wine.inf.in')
-        for rel in RECALL_WINE_OVERLAY_PATCHES:
-            patch_file = recall_dir / rel
-            already = subprocess.run(
-                ['/usr/bin/patch', '--dry-run', '-R', '-N', '-F0', '-p1', '-s', '-i', str(patch_file)],
-                cwd=src_copy, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            if already.returncode != 0:
-                run('/usr/bin/patch', '-N', '-F0', '-p1', '-s', '-i', patch_file, cwd=src_copy)
+        wine_tarball = work / 'downloads/wine.tar.gz'
+        if wine_tarball.is_file():
+            # Extract clean unpatched overlay subtrees directly from wine.tar.gz so updated
+            # Recall patches always apply cleanly even if sources/wine has older patches applied.
+            src_copy.mkdir(parents=True, exist_ok=True)
+            members = [f'sources/wine/{d}' for d in RECALL_WINE_SRC_DIRS] + ['sources/wine/loader/wine.inf.in']
+            run('/usr/bin/tar', '-xzf', wine_tarball, '--strip-components=2', '-C', src_copy, *members)
+            for rel in RECALL_WINE_OVERLAY_PATCHES:
+                run('/usr/bin/patch', '-N', '-F0', '-p1', '-s', '-i', recall_dir / rel, cwd=src_copy)
+        else:
+            for d in RECALL_WINE_SRC_DIRS:
+                shutil.copytree(wine_src / d, src_copy / d)
+            (src_copy / 'loader').mkdir(parents=True)
+            shutil.copy2(wine_src / 'loader/wine.inf.in', src_copy / 'loader/wine.inf.in')
+            for rel in RECALL_WINE_OVERLAY_PATCHES:
+                patch_file = recall_dir / rel
+                already = subprocess.run(
+                    ['/usr/bin/patch', '--dry-run', '-R', '-N', '-F0', '-p1', '-s', '-i', str(patch_file)],
+                    cwd=src_copy, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                if already.returncode != 0:
+                    run('/usr/bin/patch', '-N', '-F0', '-p1', '-s', '-i', patch_file, cwd=src_copy)
 
         prefix_map = f' -ffile-prefix-map={src_copy}=/build/overwatch-2-mac/sources/wine/sources/wine'
 

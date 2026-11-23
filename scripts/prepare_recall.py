@@ -11,7 +11,7 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 RECALL_URL = 'https://github.com/shreyashsaitwal/recall'
-RECALL_COMMIT = '420dbfdb6faf7f9ebb231c68f37881b99deacc93'
+RECALL_COMMIT = '026cda01ed944773a2fb30d1eed9be114d201660'
 APPLE_LIBD3DSHARED_SHA256 = '5131e631eee8b542eadf48f4df9fd662d9aeeb59139137e0e6e14047dc434995'
 
 LLVM_MINGW_NAME = 'llvm-mingw-20251216-ucrt-macos-universal'
