@@ -361,7 +361,7 @@ enum NotRecallInstaller {
 
             let verSentence = runtimeVersion.map { " Installed bundled runtime \($0)." } ?? ""
             log("")
-            log("Done!\(verSentence) Restart Steam, then select 'NotRecall (Recall Wine + DXMT)' under:")
+            log("Done!\(verSentence) Restart Steam, then select 'NotRecall' under:")
             log("  Game -> Properties -> Compatibility -> Force the use of a specific Steam Play compatibility tool")
             log("Configure MetalFX, Metal HUD, mouse mode, and other options directly in Steam's Compatibility tab.")
 
